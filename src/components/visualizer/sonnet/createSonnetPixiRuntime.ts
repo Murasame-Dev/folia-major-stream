@@ -17,6 +17,7 @@ import {
 import { loadPixi } from '../loadPixi';
 import { PixiSceneCache } from '../pixiSceneCache';
 import { sonnetDebugState } from './sonnetDebug';
+import { createSonnetBeatFxReader } from './sonnetBeatFx';
 import { readSonnetModulation, type SonnetShotFrameContext, updateSonnetShot } from './sonnetShotFrame';
 import { findSonnetActiveShotIndex, resolveSonnetSceneTransitionFrame } from './sonnetSceneFrame';
 import { drawSonnetFrameOverlay } from './sonnetFrameOverlay';
@@ -99,6 +100,8 @@ export class SonnetPixiRuntime {
     private readonly iconUrls = new Set<string>();
     private activeParagraphIndex = -1;
     private destroyed = false;
+    /** Experimental beat FX frame reader; yields null unless the dev flag is on. */
+    private readonly readBeatFx = createSonnetBeatFxReader();
     /**
      * An in-flight song handover. Driven by the wall clock, unlike every other transition here:
      * those derive their progress from absolute playback time so a seek stays stable, but that
@@ -352,12 +355,15 @@ export class SonnetPixiRuntime {
             finalParagraph?.endTime ?? Number.POSITIVE_INFINITY,
         );
         const hasCredits = this.creditsContainer.children.length > 0;
+        // Read once per frame, before any shot, so every consumer sees the same envelopes.
+        const beatFx = this.options.staticMode ? null : this.readBeatFx(this.options.audioBands);
         const shotFrameContext: SonnetShotFrameContext = {
             tuning: this.options.tuning,
             theme: this.options.theme,
             audioBands: this.options.audioBands,
             audioPower: this.options.audioPower,
             mod: this.mod,
+            beatFx,
         };
 
         this.sceneCache.forEach((scene, index) => {
@@ -415,8 +421,17 @@ export class SonnetPixiRuntime {
                 scene.transitionBlurFilter.enabled = transitionFrame.blur > 0.01;
             }
             if (scene.transitionGlitchEffect) {
-                scene.transitionGlitchEffect.update(transitionFrame.glitch * transitionGlitchScale, transitionFrame.glitchSeed);
-                scene.transitionGlitchEffect.filter.enabled = transitionFrame.glitch > 0.01;
+                const transitionGlitch = transitionFrame.glitch * transitionGlitchScale;
+                // The downbeat tear shares this filter; the stronger of the two drives it.
+                const beatTearWins = !!beatFx && beatFx.tear > transitionGlitch;
+                const glitchAmount = beatTearWins ? beatFx!.tear : transitionGlitch;
+                scene.transitionGlitchEffect.update(
+                    glitchAmount,
+                    beatTearWins ? beatFx!.tearSeed : transitionFrame.glitchSeed,
+                );
+                scene.transitionGlitchEffect.filter.enabled = beatTearWins
+                    ? glitchAmount > 0.01
+                    : transitionFrame.glitch > 0.01;
             }
 
             if (isFinalScene && hasCredits) {

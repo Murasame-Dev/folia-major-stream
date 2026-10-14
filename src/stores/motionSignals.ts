@@ -43,6 +43,14 @@ export const vocal = motionValue(0);
 export const treble = motionValue(0);
 export const spectrum = motionValue(new Uint8Array(0));
 
+/**
+ * Beat-synchronous impact envelopes, 0..1, decaying after each beat / downbeat of the playing
+ * track. Only driven while the dev flag `folia.dev.beatFx` is on (see src/services/beatFx); they
+ * stay at 0 otherwise, so consumers can read them unconditionally.
+ */
+export const beatImpact = motionValue(0);
+export const downbeatImpact = motionValue(0);
+
 /** The band set as one stable object, so it can be passed straight to a visualizer. */
 export const audioBands: AudioBandSignals = { bass, lowMid, mid, vocal, treble, spectrum };
 

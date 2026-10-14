@@ -17,6 +17,7 @@ import { hashSonnetSeed } from './sonnetRandom';
 import type { ShotView } from './sonnetSceneBuilder';
 import { isSonnetEmphasisRole } from './sonnetTypographyLayout';
 import { resolveSonnetSegmentCameraFocus } from './sonnetCameraTracking';
+import { applySonnetHaloFlare, resolveSonnetLineFlashAlpha, type SonnetBeatFxFrame } from './sonnetBeatFx';
 
 // src/components/visualizer/sonnet/sonnetShotFrame.ts
 // 单个 shot 的逐帧姿态：镜头运动、间隙漂移与呼吸、逐段落焦点跟踪、MG / 引导线 / 开放画框时间，
@@ -30,6 +31,8 @@ export interface SonnetShotFrameContext {
     audioPower?: MotionValue<number>;
     /** Mod multiplier lookup; 1 when the key is absent. */
     mod: (key: string) => number;
+    /** Experimental beat FX for this frame; null/absent unless the dev flag is on. */
+    beatFx?: SonnetBeatFxFrame | null;
 }
 
 /** Reads a mod modulation key, falling back to 1 so the frame is unchanged when absent. */
@@ -73,7 +76,7 @@ export const updateSonnetShot = (
     width: number,
     height: number,
     shakeIntensity: number,
-    { tuning, theme, audioBands, audioPower: audioPowerValue, mod }: SonnetShotFrameContext,
+    { tuning, theme, audioBands, audioPower: audioPowerValue, mod, beatFx }: SonnetShotFrameContext,
 ) => {
     const progress = resolveShotProgress(view.shot, time);
     const motion = tuning.typographyMotion * resolveSonnetAnimationScale(theme) * mod('motionScale');
@@ -162,6 +165,18 @@ export const updateSonnetShot = (
     ) * camera;
     view.container.x = view.baseX + (cameraFrame.x * width + shake.x * width) * camera;
     view.container.y = view.baseY + (cameraFrame.y * height + shake.y * height) * camera;
+
+    if (beatFx) {
+        // Beat punch on top of the tracked camera: zooms about the focus pivot, tilt alternates.
+        // The frame overlay is a stage sibling of the scenes, so it never moves with this.
+        view.container.scale.set(view.container.scale.x * beatFx.zoom);
+        view.container.rotation += beatFx.rotation;
+        const lineAlpha = resolveSonnetLineFlashAlpha(beatFx.lineLift);
+        if (view.mgGeoLayer) view.mgGeoLayer.alpha = lineAlpha;
+        if (view.mgBackgroundLayer) view.mgBackgroundLayer.alpha = lineAlpha;
+        if (view.mgFixedGeoLayer) view.mgFixedGeoLayer.alpha = lineAlpha;
+        applySonnetHaloFlare(view.haloLayer, beatFx.flare);
+    }
 
     if (view.mgParticleLayer) {
         // Create a slight time-difference/parallax effect for decorative elements

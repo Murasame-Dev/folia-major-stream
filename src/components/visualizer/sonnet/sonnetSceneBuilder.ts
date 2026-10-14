@@ -17,6 +17,7 @@ import {
     type SegmentView,
 } from './sonnetTextViewBuilder';
 import { createSonnetGlitchEffect, type SonnetGlitchEffect } from './sonnetGlitchFilter';
+import { isBeatFxEnabled } from '../../../services/beatFx/beatFxDevFlag';
 import {
     buildSonnetMeasuredBoundsDebug,
     createSonnetShotDebugInfo,
@@ -346,7 +347,8 @@ export const buildSonnetScene = (
         container.filters = [...(container.filters ?? []), transitionBlurFilter];
         postProcessFilters.push(transitionBlurFilter);
     }
-    const transitionGlitchEffect = options.tuning.enableTransitions && !options.staticMode
+    // The experimental beat FX (dev flag) reuse this filter for the downbeat tear.
+    const transitionGlitchEffect = (options.tuning.enableTransitions || isBeatFxEnabled()) && !options.staticMode
         ? createSonnetGlitchEffect(pixi)
         : null;
     if (transitionGlitchEffect) {
