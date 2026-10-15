@@ -180,7 +180,9 @@ const createAnalysisHost = ({ app, ipcMain, getModelsDirs, idleMs = IDLE_MS }) =
             // A truncated download fails the trailer or the length check in unpackWeights, rather than
             // uploading as weights with a zero tail.
             const { weights, manifest } = unpackWeights(await fs.promises.readFile(file));
-            return { weights, manifest };
+            // A plain Uint8Array over the tensor region, not the Buffer view: it crosses IPC by
+            // structured clone, and the renderer transfers its buffer straight on to its worker.
+            return { weights: new Uint8Array(weights.buffer, weights.byteOffset, weights.byteLength), manifest };
         } catch (error) {
             console.warn(`[beat-this-gpu] could not read ${file}: ${error?.message || error}`);
             return null;

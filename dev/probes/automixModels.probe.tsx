@@ -26,7 +26,8 @@ type Row = ElectronAutomixModelStatus['models'][number];
 const buildStatus = (installed: boolean, leftovers: boolean): ElectronAutomixModelStatus => ({
     manual: MANUAL,
     downloadDir: String.raw`C:\Users\somebody\AppData\Roaming\Folia\models`,
-    leftovers,
+    // About what the last Python runtime and ONNX models came to on Windows.
+    leftoverBytes: leftovers ? 296_000_000 : 0,
     models: manifest.models.map((entry): Row => ({
         name: entry.name,
         file: entry.file,

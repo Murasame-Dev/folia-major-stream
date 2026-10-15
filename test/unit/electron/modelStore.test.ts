@@ -19,6 +19,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 const require = createRequire(import.meta.url);
 const { createModelStore } = require('../../../electron/analysis/modelStore.cjs');
 const manifest = require('../../../shared/modelManifest.json');
+const { LEGACY_RUNTIME_BIN } = require('../../../electron/analysis/modelPaths.cjs');
 
 const sha256 = (buffer: Buffer) => createHash('sha256').update(buffer).digest('hex');
 
@@ -206,16 +207,17 @@ describe('finding a model already on the machine', () => {
         writeFileSync(installed(), goodBytes);
         writeFileSync(path.join(downloadDir, 'beat_this.onnx'), goodBytes);
         writeFileSync(path.join(downloadDir, 'htdemucs-v2.onnx'), goodBytes);
-        mkdirSync(path.join(downloadDir, 'runtime', 'bin'), { recursive: true });
-        writeFileSync(path.join(downloadDir, 'runtime', 'bin', 'python3'), goodBytes);
-        expect(makeStore().status().leftovers).toBe(true);
+        const exe = path.join(downloadDir, 'runtime', ...LEGACY_RUNTIME_BIN);
+        mkdirSync(path.dirname(exe), { recursive: true });
+        writeFileSync(exe, goodBytes);
+        expect(makeStore().status().leftoverBytes).toBe(3 * goodBytes.length);
 
         const result = await makeStore().removeAll();
 
         expect(result.removed).toEqual([model.name]);
         expect(result.freed).toBe(4 * goodBytes.length);
         expect(readdirSync(downloadDir)).toEqual([]);
-        expect(makeStore().status().leftovers).toBe(false);
+        expect(makeStore().status().leftoverBytes).toBe(0);
     });
 
     it('sweeps up half-finished downloads, which nothing else ever would', async () => {

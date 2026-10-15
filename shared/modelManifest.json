@@ -23,7 +23,7 @@
     "build/buildMnnRuntime.mjs): there is no runtime download and no per-platform entry. The",
     "files earlier versions used - beat_this.onnx, htdemucs-v2.onnx, htdemucs.onnx and the",
     "Python runtime archives - stay on the mirrors for those versions; this one never reads them",
-    "(electron/analysis/modelPaths.cjs LEGACY_ENTRIES)."
+    "(electron/analysis/modelPaths.cjs LEGACY_FILES)."
   ],
   "_manualComment": [
     "Shown only when every mirror has failed. An empty list = the settings page does not offer the",

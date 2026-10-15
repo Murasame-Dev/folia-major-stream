@@ -671,8 +671,8 @@ declare global {
      */
     manual: { links: Array<{ label: string; url: string; code?: string }>; note: string };
     downloadDir: string;
-    /** True when an earlier version's models or Python runtime are still on disk; "delete all" removes them. */
-    leftovers: boolean;
+    /** Bytes of an earlier version's models and Python runtime still on disk; "delete all" removes them too. */
+    leftoverBytes: number;
     models: ElectronAutomixModelEntry[];
   }
 
