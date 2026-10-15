@@ -40,36 +40,75 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
 /**
  * Conv2d with kernel (kf, 3), stride (kf, 1), padding (0, 1), BatchNorm folded into the weights, then
- * GELU. [Fin, T, Cin] -> [Fin / kf, T, Cout]. One invocation per output element.
+ * GELU. [Fin, T, Cin] -> [Fin / kf, T, Cout], computed as an implicit GEMM: rows are output tokens
+ * (fo, t), K runs over (df, dt, ci) and the A tile is gathered straight from the input (zero where
+ * the time tap falls off either end), so no im2col buffer exists. Same 64x64 tiling as MATMUL.
  */
 export const CONV_GELU = /* wgsl */ `
 ${GELU}
 struct P { fout: u32, frames: u32, cin: u32, cout: u32, kf: u32 }
 @group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read> w: array<f32>;   // [cout, cin, kf, 3]
+@group(0) @binding(1) var<storage, read> w: array<f32>;   // [kf, 3, cin, cout] = [K, cout]
 @group(0) @binding(2) var<storage, read> b: array<f32>;
 @group(0) @binding(3) var<storage, read_write> y: array<f32>;
 @group(0) @binding(4) var<uniform> p: P;
-@compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) id: vec3u) {
-  let i = id.x;
-  if (i >= p.fout * p.frames * p.cout) { return; }
-  let co = i % p.cout;
-  let t = (i / p.cout) % p.frames;
-  let fo = i / (p.cout * p.frames);
-  var acc = b[co];
-  for (var df = 0u; df < p.kf; df++) {
-    let fi = fo * p.kf + df;
-    for (var dt = 0u; dt < 3u; dt++) {
-      let ti = i32(t) + i32(dt) - 1;
-      if (ti < 0 || ti >= i32(p.frames)) { continue; }
-      let xBase = (fi * p.frames + u32(ti)) * p.cin;
-      for (var ci = 0u; ci < p.cin; ci++) {
-        acc += w[((co * p.cin + ci) * p.kf + df) * 3u + dt] * x[xBase + ci];
+var<workgroup> as_: array<f32, 1024>; // [64 rows][16 k]
+var<workgroup> bs_: array<f32, 1024>; // [16 k][64 cols]
+
+fn gather(row: u32, k: u32) -> f32 {
+  let ci = k % p.cin;
+  let tap = k / p.cin;
+  let dt = tap % 3u;
+  let df = tap / 3u;
+  let t = row % p.frames;
+  let fo = row / p.frames;
+  let ti = i32(t) + i32(dt) - 1;
+  if (ti < 0 || ti >= i32(p.frames)) { return 0.0; }
+  return x[((fo * p.kf + df) * p.frames + u32(ti)) * p.cin + ci];
+}
+
+@compute @workgroup_size(16, 16)
+fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u, @builtin(local_invocation_index) li: u32) {
+  let m = p.fout * p.frames;
+  let kTotal = p.kf * 3u * p.cin;
+  let row0 = wg.y * 64u;
+  let col0 = wg.x * 64u;
+  var acc: array<array<f32, 4>, 4>;
+  for (var k0 = 0u; k0 < kTotal; k0 += 16u) {
+    for (var i = 0u; i < 4u; i++) {
+      let idx = li + i * 256u;
+      let ar = row0 + idx / 16u;
+      let ak = k0 + idx % 16u;
+      var av = 0.0;
+      if (ar < m && ak < kTotal) { av = gather(ar, ak); }
+      as_[idx] = av;
+      let bk = k0 + idx / 64u;
+      let bc = col0 + idx % 64u;
+      var bv = 0.0;
+      if (bk < kTotal && bc < p.cout) { bv = w[bk * p.cout + bc]; }
+      bs_[idx] = bv;
+    }
+    workgroupBarrier();
+    for (var kk = 0u; kk < 16u; kk++) {
+      var a: array<f32, 4>;
+      var bb: array<f32, 4>;
+      for (var i = 0u; i < 4u; i++) { a[i] = as_[(l.y * 4u + i) * 16u + kk]; }
+      for (var j = 0u; j < 4u; j++) { bb[j] = bs_[kk * 64u + l.x * 4u + j]; }
+      for (var i = 0u; i < 4u; i++) {
+        for (var j = 0u; j < 4u; j++) { acc[i][j] += a[i] * bb[j]; }
       }
     }
+    workgroupBarrier();
   }
-  y[i] = gelu(acc);
+  for (var i = 0u; i < 4u; i++) {
+    let r = row0 + l.y * 4u + i;
+    if (r >= m) { continue; }
+    for (var j = 0u; j < 4u; j++) {
+      let c = col0 + l.x * 4u + j;
+      if (c >= p.cout) { continue; }
+      y[r * p.cout + c] = gelu(acc[i][j] + b[c]);
+    }
+  }
 }
 `;
 
