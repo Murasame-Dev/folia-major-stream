@@ -1,6 +1,7 @@
 /// <reference types="@webgpu/types" />
 import { BeatThisWgsl, BEAT_THIS_WGSL_FRAMES, type BeatThisWgslManifest } from '../../src/services/automix/beatThisWgsl/runtime';
 import { BEAT_THIS_SAMPLE_RATE, melSpectrogram, splitForModel } from '../../src/services/automix/beatThis';
+import { runBeatThisGpu } from '../../src/services/automix/beatThisGpu';
 
 // dev/beat-this-wgsl/harness.ts
 // Renderer side of the test shell (see main.cjs): loads the exported weights and the mel chunks,
@@ -11,6 +12,10 @@ import { BEAT_THIS_SAMPLE_RATE, melSpectrogram, splitForModel } from '../../src/
 // With BTW_SONGS (comma-separated audio paths) it instead runs whole tracks through the app's own
 // front end (melSpectrogram + splitForModel) and writes, per track, the chunks, their placement and
 // the WGSL logits, so compare-songs.ts can run the same chunks through ORT and diff the beat lists.
+// BTW_TRIM_SEC cuts each track to its first seconds (under 30 s is the one-short-chunk case).
+// BTW_APP=1 runs the songs through the app's own path instead - beatThisGpu.ts and its worker
+// (bundled separately as beatThisGpu-worker.js), with the weights handed over the way the main
+// process hands them over.
 
 // Node's require, read off the window so the bundler leaves these imports to the renderer at runtime.
 const nodeRequire = (globalThis as unknown as { require: (id: string) => any }).require;
@@ -37,7 +42,8 @@ async function main() {
     const manifest: BeatThisWgslManifest = JSON.parse(fs.readFileSync(config.weights.replace(/\.bin$/, '.json'), 'utf8'));
     const weights: Uint8Array = fs.readFileSync(config.weights);
     if (config.songs.length) {
-        await runSongs(device, weights, manifest, config.songs, config.out, config.f16);
+        if (config.app) installAppBridge(weights, manifest, config.out);
+        await runSongs(device, weights, manifest, config.songs, config.out, config.f16, config.trimSec, config.app);
         ipcRenderer.send('btw-done', 0);
         return;
     }
@@ -124,30 +130,60 @@ async function decodeMono(file: string): Promise<Float32Array> {
     return left.map((value, index) => (value + right[index]) / 2);
 }
 
-async function runSongs(device: GPUDevice, weights: Uint8Array, manifest: BeatThisWgslManifest, songs: string[], out: string, f16?: 'storage' | 'math') {
-    const model = await BeatThisWgsl.create(device, weights, manifest, { f16 });
+/**
+ * Stands in for what the app's page has: window.electron.getBeatThisGpuWeights (the main process
+ * reading the export) and a Worker constructor that resolves Vite's worker URL - here the worker
+ * bundled on its own next to harness.js, since this bundle is not built by Vite.
+ */
+function installAppBridge(weights: Uint8Array, manifest: BeatThisWgslManifest, out: string) {
+    (window as unknown as { electron: object }).electron = {
+        getBeatThisGpuWeights: async () => ({ weights: weights.slice(), manifest }),
+    };
+    const source = fs.readFileSync(path.join(out, 'beatThisGpu-worker.js'), 'utf8');
+    const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+    const NativeWorker = Worker;
+    (globalThis as unknown as { Worker: unknown }).Worker = class extends NativeWorker {
+        constructor() { super(url); }
+    };
+}
+
+async function runSongs(device: GPUDevice, weights: Uint8Array, manifest: BeatThisWgslManifest, songs: string[], out: string,
+    f16?: 'storage' | 'math', trimSec = 0, app = false) {
+    const model = app ? null : await BeatThisWgsl.create(device, weights, manifest, { f16 });
     const T = BEAT_THIS_WGSL_FRAMES;
     for (const song of songs) {
         const name = path.basename(song).replace(/\.[^.]+$/, '');
-        const mel = await melSpectrogram(await decodeMono(song));
+        const mono = await decodeMono(song);
+        const mel = await melSpectrogram(trimSec ? mono.subarray(0, Math.round(trimSec * BEAT_THIS_SAMPLE_RATE)) : mono);
         const chunks = splitForModel(mel);
-        if (chunks.some(chunk => chunk.frames !== T)) throw new Error(`${name}: chunk shorter than ${T} frames`);
+        // Files keep the [chunks, 1500, ...] layout; a short chunk fills the front of its slot.
         const input = new Float32Array(chunks.length * T * 128);
         const logits = new Float32Array(chunks.length * 2 * T);
+        const started = performance.now();
         let gpuMs = 0;
-        for (const [index, chunk] of chunks.entries()) {
-            input.set(chunk.data, index * T * 128);
-            const result = await model.run(chunk.data);
-            logits.set(result.beat, index * 2 * T);
-            logits.set(result.downbeat, (index * 2 + 1) * T);
-            gpuMs += result.gpuMs;
+        chunks.forEach((chunk, index) => input.set(chunk.data, index * T * 128));
+        if (app) {
+            const result = await runBeatThisGpu(chunks);
+            if (!result) throw new Error(`${name}: the app path answered null`);
+            result.beat.forEach((track, index) => logits.set(track, index * 2 * T));
+            result.downbeat.forEach((track, index) => logits.set(track, (index * 2 + 1) * T));
+        } else {
+            for (const [index, chunk] of chunks.entries()) {
+                const result = await model!.run(chunk.data);
+                logits.set(result.beat, index * 2 * T);
+                logits.set(result.downbeat, (index * 2 + 1) * T);
+                gpuMs += result.gpuMs;
+            }
         }
         fs.writeFileSync(path.join(out, `${name}.chunks.f32`), Buffer.from(input.buffer));
         fs.writeFileSync(path.join(out, `${name}.wgsl.f32`), Buffer.from(logits.buffer));
-        fs.writeFileSync(path.join(out, `${name}.meta.json`), JSON.stringify({ frames: mel.frames, starts: chunks.map(chunk => chunk.start) }));
-        log(`${name}: ${mel.frames} frames, ${chunks.length} chunks, gpu ${gpuMs.toFixed(0)} ms total`);
+        fs.writeFileSync(path.join(out, `${name}.meta.json`), JSON.stringify({
+            frames: mel.frames, starts: chunks.map(chunk => chunk.start), chunkFrames: chunks.map(chunk => chunk.frames),
+        }));
+        log(`${name}: ${mel.frames} frames, ${chunks.length} chunks (${chunks.map(chunk => chunk.frames).join(',')}), `
+            + `${app ? `app path ${(performance.now() - started).toFixed(0)} ms wall` : `gpu ${gpuMs.toFixed(0)} ms total`}`);
     }
-    model.destroy();
+    model?.destroy();
 }
 
 main().catch((error) => {

@@ -14,6 +14,10 @@ const path = require('path');
 // BTW_F16=storage|math runs the shader-f16 kernels (needs the --f16 export and an adapter with
 // shader-f16); see kernels.ts for the two levels.
 //
+// BTW_COEXIST=1 runs coexist.ts instead (bundle it as harness.js and coexist-worker.ts as
+// coexist-worker.js): a VISIBLE window drawing a WebGL2 load of BTW_LOAD iterations per pixel while
+// a worker runs BTW_COEXIST_CHUNKS chunks per slicing mode, and prints missed frames per mode.
+//
 // BTW_PROFILE=1 times every dispatch with timestamp-query and writes profile.json (median per
 // dispatch over the repeats) plus a summary by kernel and by network stage.
 //
@@ -54,6 +58,10 @@ ipcMain.handle('btw-config', () => ({
     songs: (process.env.BTW_SONGS || '').split(',').filter(Boolean),
     profile: process.env.BTW_PROFILE === '1',
     f16: process.env.BTW_F16 || undefined,
+    load: Number(process.env.BTW_LOAD || 64),
+    trimSec: Number(process.env.BTW_TRIM_SEC || 0),
+    app: process.env.BTW_APP === '1',
+    coexistChunks: Number(process.env.BTW_COEXIST_CHUNKS || 10),
 }));
 ipcMain.on('btw-log', (_event, line) => console.log(line));
 ipcMain.on('btw-done', (_event, code) => app.exit(code));
@@ -61,7 +69,13 @@ ipcMain.on('btw-done', (_event, code) => app.exit(code));
 app.whenReady().then(() => {
     const html = path.join(dir, 'harness.html');
     fs.writeFileSync(html, '<!doctype html><meta charset="utf-8"><script src="harness.js"></script>');
-    const win = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true, contextIsolation: false } });
+    const coexist = process.env.BTW_COEXIST === '1';
+    const win = new BrowserWindow({
+        show: coexist,
+        width: 1280,
+        height: 800,
+        webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: !coexist },
+    });
     win.webContents.on('console-message', (event) => console.log(`[renderer] ${event.message}`));
     win.webContents.on('did-fail-load', (_event, code, description) => {
         console.error('load failed', code, description);
