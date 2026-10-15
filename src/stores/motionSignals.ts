@@ -45,7 +45,7 @@ export const spectrum = motionValue(new Uint8Array(0));
 
 /**
  * Beat-synchronous impact envelopes, 0..1, decaying after each beat / downbeat of the playing
- * track. Only driven while Sonnet's 智能动感 is on (see src/services/beatFx); they
+ * track. Only driven while Sonnet's 智能动感模式 is on (see src/services/beatFx); they
  * stay at 0 otherwise, so consumers can read them unconditionally.
  */
 export const beatImpact = motionValue(0);

@@ -9,7 +9,7 @@ import { getCachedSongAudioBlob } from '../onlineMusic/resourceCache';
 import { getPlaybackAnalysisKey, getPlaybackRepresentation } from '../playbackRecovery/representationRegistry';
 
 // src/services/beatFx/beatFxSource.ts
-// Where Sonnet's 智能动感 gets the playing track's beat list from.
+// Where Sonnet's 智能动感模式 gets the playing track's beat list from.
 //
 // First the beat list stored for this track (automix/beatGridCache.ts) - written by an earlier play,
 // or by automix's profile, which runs the same model. Otherwise the in-app Beat This! pass on the

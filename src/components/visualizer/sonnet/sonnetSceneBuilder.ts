@@ -347,7 +347,7 @@ export const buildSonnetScene = (
         container.filters = [...(container.filters ?? []), transitionBlurFilter];
         postProcessFilters.push(transitionBlurFilter);
     }
-    // 智能动感 reuses this filter for the downbeat tear.
+    // 智能动感模式 reuses this filter for the downbeat tear.
     const transitionGlitchEffect = (options.tuning.enableTransitions || options.tuning.smartBeatEnabled) && !options.staticMode
         ? createSonnetGlitchEffect(pixi)
         : null;

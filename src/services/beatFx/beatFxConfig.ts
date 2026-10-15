@@ -3,7 +3,7 @@ import type { SonnetTuning, VisualizerMode } from '../../types';
 // src/services/beatFx/beatFxConfig.ts
 // When the beat FX run, and the one developer knob left from the experiment.
 //
-// The FX are Sonnet's 智能动感 setting (`SonnetTuning.smartBeatEnabled`), so they run only while
+// The FX are Sonnet's 智能动感模式 setting (`SonnetTuning.smartBeatEnabled`), so they run only while
 // Sonnet is the visualizer on screen with that setting on, and never in static mode. Anything else
 // skips every beat FX code path - no analysis, no clock - and the visualizers render as before.
 //
@@ -24,7 +24,7 @@ const offsetMs = (() => {
     return Number.isFinite(value) ? value : 0;
 })();
 
-/** Whether the beat FX should run: Sonnet on screen, 智能动感 on, not in static mode. */
+/** Whether the beat FX should run: Sonnet on screen, 智能动感模式 on, not in static mode. */
 export const isSmartBeatWanted = (
     mode: VisualizerMode,
     tuning: Pick<SonnetTuning, 'smartBeatEnabled'>,

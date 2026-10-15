@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // test/unit/automix/beatGridCache.test.ts
-// The whole-track beat list shared by automix and Sonnet's 智能动感.
+// The whole-track beat list shared by automix and Sonnet's 智能动感模式.
 
 const store = new Map<string, unknown>();
 vi.mock('@/services/db', () => ({

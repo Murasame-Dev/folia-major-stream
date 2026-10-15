@@ -100,7 +100,7 @@ export class SonnetPixiRuntime {
     private readonly iconUrls = new Set<string>();
     private activeParagraphIndex = -1;
     private destroyed = false;
-    /** 智能动感 frame reader; yields null unless it is on and the track's beats are installed. */
+    /** 智能动感模式 frame reader; yields null unless it is on and the track's beats are installed. */
     private readonly readBeatFx = createSonnetBeatFxReader();
     /**
      * An in-flight song handover. Driven by the wall clock, unlike every other transition here:

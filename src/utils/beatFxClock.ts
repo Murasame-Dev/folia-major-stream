@@ -1,5 +1,5 @@
 // src/utils/beatFxClock.ts
-// Pure beat clock for the beat FX (Sonnet 智能动感): walks a sorted beat/downbeat event list against the
+// Pure beat clock for the beat FX (Sonnet 智能动感模式): walks a sorted beat/downbeat event list against the
 // heard playback time and produces two decaying impact envelopes. No React, no MotionValues - the
 // caller owns the frame loop and writes the envelopes wherever it needs them.
 

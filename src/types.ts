@@ -560,7 +560,7 @@ export interface SonnetTuning {
   /** Radial chromatic dispersion amount, 0..1. */
   postProcessLensDispersion: number;
   /**
-   * 智能动感: beat_this' beats drive the picture instead of the FFT bands (src/services/beatFx).
+   * 智能动感模式: beat_this' beats drive the picture instead of the FFT bands (src/services/beatFx).
    * Off leaves Sonnet exactly as it was.
    */
   smartBeatEnabled: boolean;

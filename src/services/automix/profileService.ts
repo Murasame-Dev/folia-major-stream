@@ -345,7 +345,7 @@ export const ensureTrackProfile = async (request: ProfileRequest): Promise<void>
             // answer to nobody. `runModel` records whether the model RUNS; what it then answers is
             // separate, and the profile records this one - see `TrackProfile.gridless`.
             const runModel = request.wantGrid && canRunBeatThis();
-            // A whole track Sonnet's 智能动感 already ran the model on is read back rather than run
+            // A whole track Sonnet's 智能动感模式 already ran the model on is read back rather than run
             // again, and a whole track measured here is kept for it (beatGridCache.ts). A head-only
             // read neither uses nor stores one: its profile describes the head, and so must its grid.
             const whole = !result.partial;

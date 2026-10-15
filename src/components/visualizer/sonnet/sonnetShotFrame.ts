@@ -36,7 +36,7 @@ export interface SonnetShotFrameContext {
     audioPower?: MotionValue<number>;
     /** Mod multiplier lookup; 1 when the key is absent. */
     mod: (key: string) => number;
-    /** 智能动感 for this frame; null/absent unless it is on and the track's beats are installed. */
+    /** 智能动感模式 for this frame; null/absent unless it is on and the track's beats are installed. */
     beatFx?: SonnetBeatFxFrame | null;
 }
 

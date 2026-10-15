@@ -9,7 +9,7 @@ import { getPlaybackAnalysisKey } from '../services/playbackRecovery/representat
 
 // src/hooks/useBeatFxTrack.ts
 // Loads the beat list of the on-screen track into the live beat clock whenever the track changes,
-// while Sonnet's 智能动感 is on. Only the track identity and the switch enter React; the per-frame
+// while Sonnet's 智能动感模式 is on. Only the track identity and the switch enter React; the per-frame
 // clock lives in services/beatFx/beatFxLive.
 
 /** Whether the beat clock should be stepped; the caller's frame loop reads it. */

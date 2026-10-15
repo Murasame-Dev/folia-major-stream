@@ -4,7 +4,7 @@ import { getBeatFxRotationSign, isBeatFxReady } from '../../../services/beatFx/b
 import type { SonnetAnimationCue } from './types';
 
 // src/components/visualizer/sonnet/sonnetBeatFx.ts
-// Sonnet's 智能动感 (`SonnetTuning.smartBeatEnabled`). Pure envelope math plus a per-runtime frame
+// Sonnet's 智能动感模式 (`SonnetTuning.smartBeatEnabled`). Pure envelope math plus a per-runtime frame
 // reader; each effect follows its own signal:
 //   camera punch  <- beatImpact      (zoom + alternating tilt, layered on the shot camera)
 //   mono tear     <- downbeatImpact  (shares the transition glitch filter, combined with max)
@@ -65,7 +65,7 @@ export const resolveSonnetBeatFxFrame = (
     lineLift,
 });
 
-/** Whether this frame is a beat FX frame: 智能动感 on and the track's beats installed. */
+/** Whether this frame is a beat FX frame: 智能动感模式 on and the track's beats installed. */
 export const isSonnetBeatFxActive = (tuning: Pick<SonnetTuning, 'smartBeatEnabled'>): boolean =>
     tuning.smartBeatEnabled && isBeatFxReady();
 

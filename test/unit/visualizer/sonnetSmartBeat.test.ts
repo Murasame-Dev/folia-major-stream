@@ -13,7 +13,7 @@ import {
 } from '@/components/visualizer/sonnet/sonnetBeatFx';
 
 // test/unit/visualizer/sonnetSmartBeat.test.ts
-// Sonnet's 智能动感: the setting at the store and codec boundaries, when the FX run at all, and how
+// Sonnet's 智能动感模式: the setting at the store and codec boundaries, when the FX run at all, and how
 // the 轻拍 / 重拍 strengths reach the frame.
 
 const createLocalStorageMock = (): Storage => {
@@ -32,7 +32,7 @@ const createLocalStorageMock = (): Storage => {
 
 const tuning = (patch: Partial<SonnetTuning> = {}): SonnetTuning => ({ ...DEFAULT_SONNET_TUNING, ...patch });
 
-describe('Sonnet 智能动感 setting', () => {
+describe('Sonnet 智能动感模式 setting', () => {
     let storage: Storage;
 
     beforeEach(() => {

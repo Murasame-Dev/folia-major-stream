@@ -5,7 +5,7 @@ import type { BeatGrid } from './beatThis';
 // Beat This!'s raw answer for a whole track, kept on disk under the track's analysis key.
 //
 // Two features want it and neither should pay twice. Automix's profile only keeps the collapsed
-// `{offset, period}` grid, while Sonnet's 智能动感 needs every beat and downbeat; whichever runs the
+// `{offset, period}` grid, while Sonnet's 智能动感模式 needs every beat and downbeat; whichever runs the
 // model first stores the list here and the other reads it. It is also what lets a replayed track have
 // beat FX from its first second instead of after a fresh analysis.
 //

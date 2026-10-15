@@ -48,7 +48,7 @@ export const buildSonnetShotMg = (
     height: number,
     seed: number,
     iconTextures: Map<string, import('pixi.js').Texture>,
-    /** 智能动感: icons pop on lyric onsets, once the track's beats are installed. */
+    /** 智能动感模式: icons pop on lyric onsets, once the track's beats are installed. */
     smartBeatEnabled = false,
 ) => {
     const { Container } = pixi;
@@ -783,7 +783,7 @@ export const buildSonnetShotMg = (
             for (const part of c.fixedGeoParts as AnimatedGraphics[]) part.update(rawProgress);
         }
 
-        // 智能动感, once the beats are in: icons pop on lyric segment onsets instead of breathing
+        // 智能动感模式, once the beats are in: icons pop on lyric segment onsets instead of breathing
         // with the bands. Replaces the band mix below rather than stacking on it.
         const onsetPop = smartBeatEnabled && isBeatFxReady() ? resolveSonnetIconOnsetPop(time, cues) : null;
         if (!onsetPop) {
