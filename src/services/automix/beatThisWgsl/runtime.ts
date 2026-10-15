@@ -24,14 +24,22 @@ export interface BeatThisWgslResult {
     gpuMs: number;
     /** Intermediate activations by stage name, only when asked for. Frontend stages are [F, T, C]. */
     stages?: Record<string, Float32Array>;
+    /** GPU time of every dispatch in order, when profiling was asked for and the device has timestamp-query. */
+    profile?: { label: string; ms: number }[];
 }
 
 interface Binding { buffer: GPUBuffer; offset?: number; size?: number }
 type Step =
-    | { kind: 'dispatch'; pipeline: GPUComputePipeline; group: GPUBindGroup; count: [number, number, number] }
+    | { kind: 'dispatch'; label: string; pipeline: GPUComputePipeline; group: GPUBindGroup; count: [number, number, number] }
     | { kind: 'stage'; name: string; buffer: GPUBuffer; floats: number };
 
 const product = (shape: number[]) => shape.reduce((a, b) => a * b, 1);
+
+/** Short kernel names for profiling labels. */
+const KERNEL_NAMES = new Map<string, string>([
+    [STEM_BN, 'stem_bn'], [CONV_GELU, 'conv'], [RMS_NORM, 'rmsnorm'], [MATMUL, 'matmul'],
+    [ROPE, 'rope'], [ATTENTION, 'attention'], [FLATTEN, 'flatten'], [SUM_HEAD, 'sum_head'],
+]);
 
 export class BeatThisWgsl {
     private constructor(
@@ -114,10 +122,13 @@ export class BeatThisWgsl {
         };
 
         const steps: Step[] = [];
-        const dispatch = (code: string, bindings: Binding[], params: number[], count: [number, number, number]) => {
+        // Where in the network the next dispatches belong, for profiling labels ("block0.time", "layer3"...).
+        let scope = 'stem';
+        const dispatch = (code: string, bindings: Binding[], params: number[], count: [number, number, number], detail = '') => {
             const compute = pipeline(code);
             const entries = [...bindings, { buffer: uniform(params) }].map((resource, binding) => ({ binding, resource }));
-            steps.push({ kind: 'dispatch', pipeline: compute, group: device.createBindGroup({ layout: compute.getBindGroupLayout(0), entries }), count });
+            const label = `${scope} ${KERNEL_NAMES.get(code)}${detail ? ` ${detail}` : ''}`;
+            steps.push({ kind: 'dispatch', label, pipeline: compute, group: device.createBindGroup({ layout: compute.getBindGroupLayout(0), entries }), count });
         };
         const groups = (invocations: number): [number, number, number] => [Math.ceil(invocations / 64), 1, 1];
         const stage = (name: string, buffer: GPUBuffer, floats: number) => steps.push({ kind: 'stage', name, buffer, floats });
@@ -128,7 +139,7 @@ export class BeatThisWgsl {
         const matmul = (input: GPUBuffer, weight: string, bias: string | null, output: GPUBuffer, m: number, mode: number) => {
             const [k, n] = shape(weight);
             dispatch(MATMUL, [{ buffer: input }, tensor(weight), bias ? tensor(bias) : { buffer: zeros }, { buffer: output }],
-                [m, n, k, mode], [Math.ceil(n / 64), Math.ceil(m / 64), 1]);
+                [m, n, k, mode], [Math.ceil(n / 64), Math.ceil(m / 64), 1], weight.split('.').slice(-2).join('.'));
         };
 
         /**
@@ -139,6 +150,7 @@ export class BeatThisWgsl {
             axis: { n: number; seqStride: number; batchStride: number; batches: number; posDiv: number }) => {
             const heads = c / HEAD_DIM;
             const width = 3 * c + heads;
+            scope = prefix;
             rmsNorm(stream, `${prefix}.attn.norm`, rows, c);
             matmul(h, `${prefix}.attn.qkvg.w`, `${prefix}.attn.qkvg.b`, qkv, rows, 0);
             dispatch(ROPE, [{ buffer: qkv }, { buffer: ropeTable }], [rows, heads, width, c, axis.posDiv, axis.n], groups(rows * heads * 16));
@@ -168,6 +180,7 @@ export class BeatThisWgsl {
                 { n: T, seqStride: 1, batchStride: T, batches: freqs_, posDiv: 1 });
             stage(`block${block}_time`, x[cur], rows * channels);
             const next = 1 - cur;
+            scope = `block${block}`;
             dispatch(CONV_GELU, [{ buffer: x[cur] }, tensor(`block${block}.conv.w`), tensor(`block${block}.conv.b`), { buffer: x[next] }],
                 [freqs_ / 2, T, channels, channels * 2, 2], groups((freqs_ / 2) * T * channels * 2));
             cur = next;
@@ -176,6 +189,7 @@ export class BeatThisWgsl {
             stage(`block${block}_conv`, x[cur], freqs_ * T * channels);
         }
 
+        scope = 'frontend';
         dispatch(FLATTEN, [{ buffer: x[cur] }, { buffer: flat }], [freqs_, T, channels], groups(freqs_ * T * channels));
         cur = 1 - cur;
         matmul(flat, 'frontend.linear.w', 'frontend.linear.b', x[cur], T, 0);
@@ -185,6 +199,7 @@ export class BeatThisWgsl {
             transformerPair(x[cur], `layer${layer}`, T, dim, { n: T, seqStride: 1, batchStride: T, batches: 1, posDiv: 1 });
             stage(`layer${layer}`, x[cur], T * dim);
         }
+        scope = 'head';
         rmsNorm(x[cur], 'final.norm', T, dim);
         matmul(h, 'head.w', 'head.b', logits, T, 0);
         dispatch(SUM_HEAD, [{ buffer: logits }, { buffer: outBuffer }], [T], groups(T));
@@ -194,8 +209,12 @@ export class BeatThisWgsl {
         return new BeatThisWgsl(device, steps, melBuffer, outBuffer, owned);
     }
 
-    /** One chunk. `mel` is [1500, 128] frame-major, the layout beatThis.ts produces. */
-    async run(mel: Float32Array, options: { stages?: boolean } = {}): Promise<BeatThisWgslResult> {
+    /**
+     * One chunk. `mel` is [1500, 128] frame-major, the layout beatThis.ts produces. `profile` puts every
+     * dispatch in its own pass with timestamps (needs a device created with 'timestamp-query'); the
+     * extra passes cost a little, so profiled totals run slightly above unprofiled ones.
+     */
+    async run(mel: Float32Array, options: { stages?: boolean; profile?: boolean } = {}): Promise<BeatThisWgslResult> {
         const T = BEAT_THIS_WGSL_FRAMES;
         if (mel.length !== T * MEL_BINS) throw new Error(`beat_this chunk must be ${T}x${MEL_BINS}`);
         const { device } = this;
@@ -203,9 +222,18 @@ export class BeatThisWgsl {
 
         const encoder = device.createCommandEncoder();
         const readbacks: { name: string; buffer: GPUBuffer }[] = [];
+        const profiled = options.profile && device.features.has('timestamp-query')
+            ? this.steps.filter(step => step.kind === 'dispatch') : [];
+        const querySet = profiled.length ? device.createQuerySet({ type: 'timestamp', count: profiled.length * 2 }) : null;
+        let query = 0;
         let pass: GPUComputePassEncoder | null = null;
         for (const step of this.steps) {
             if (step.kind === 'dispatch') {
+                if (querySet) {
+                    pass?.end();
+                    pass = encoder.beginComputePass({ timestampWrites: { querySet, beginningOfPassWriteIndex: query, endOfPassWriteIndex: query + 1 } });
+                    query += 2;
+                }
                 pass ??= encoder.beginComputePass();
                 pass.setPipeline(step.pipeline);
                 pass.setBindGroup(0, step.group);
@@ -220,6 +248,13 @@ export class BeatThisWgsl {
             readbacks.push({ name: step.name, buffer: readback });
         }
         pass?.end();
+        let timestamps: GPUBuffer | null = null;
+        if (querySet) {
+            const resolved = device.createBuffer({ size: query * 8, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+            timestamps = device.createBuffer({ size: query * 8, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+            encoder.resolveQuerySet(querySet, 0, query, resolved, 0);
+            encoder.copyBufferToBuffer(resolved, 0, timestamps, 0, query * 8);
+        }
 
         const started = performance.now();
         device.queue.submit([encoder.finish()]);
@@ -232,12 +267,24 @@ export class BeatThisWgsl {
             stages[name] = new Float32Array(buffer.getMappedRange().slice(0));
             buffer.destroy();
         }
+        let profile: BeatThisWgslResult['profile'];
+        if (timestamps) {
+            await timestamps.mapAsync(GPUMapMode.READ);
+            const ticks = new BigInt64Array(timestamps.getMappedRange());
+            profile = profiled.map((step, index) => ({
+                label: step.kind === 'dispatch' ? step.label : '',
+                ms: Number(ticks[index * 2 + 1] - ticks[index * 2]) / 1e6,
+            }));
+            timestamps.destroy();
+            querySet?.destroy();
+        }
         const out = stages.logits;
         return {
             beat: out.subarray(0, T),
             downbeat: out.subarray(T, 2 * T),
             gpuMs,
             ...(options.stages ? { stages } : {}),
+            ...(profile ? { profile } : {}),
         };
     }
 
