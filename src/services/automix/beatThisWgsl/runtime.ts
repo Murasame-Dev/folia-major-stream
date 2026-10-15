@@ -167,7 +167,7 @@ export class BeatThisWgsl {
         let freqs_ = MEL_BINS / 4;
         let channels = stem;
         dispatch(CONV_GELU, [{ buffer: stemIn }, tensor('stem.conv.w'), tensor('stem.conv.b'), { buffer: x[0] }],
-            [freqs_, T, 1, channels, 4], groups(freqs_ * T * channels));
+            [freqs_, T, 1, channels, 4], [Math.ceil(channels / 64), Math.ceil((freqs_ * T) / 64), 1]);
         let cur = 0;
         stage('stem', x[cur], freqs_ * T * channels);
 
@@ -182,7 +182,7 @@ export class BeatThisWgsl {
             const next = 1 - cur;
             scope = `block${block}`;
             dispatch(CONV_GELU, [{ buffer: x[cur] }, tensor(`block${block}.conv.w`), tensor(`block${block}.conv.b`), { buffer: x[next] }],
-                [freqs_ / 2, T, channels, channels * 2, 2], groups((freqs_ / 2) * T * channels * 2));
+                [freqs_ / 2, T, channels, channels * 2, 2], [Math.ceil((channels * 2) / 64), Math.ceil(((freqs_ / 2) * T) / 64), 1]);
             cur = next;
             freqs_ /= 2;
             channels *= 2;

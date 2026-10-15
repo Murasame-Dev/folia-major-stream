@@ -8,7 +8,8 @@ Writes OUT.bin (little-endian f32, every tensor 256-byte aligned) and OUT.json (
 floats, shape). Everything that is a constant transform of the weights happens here, once, so the
 kernels never redo it per chunk:
 
-- BatchNorms folded: bn1d into a per-frequency scale/shift, every bn2d into its convolution.
+- BatchNorms folded: bn1d into a per-frequency scale/shift, every bn2d into its convolution, whose
+  weights are stored [kf, 3, cin, cout] so the conv runs as a GEMM with K = (df, dt, ci).
 - RMSNorm gammas pre-multiplied by sqrt(dim).
 - Linear weights transposed to [in, out], the layout the matmul kernel reads row by row.
 - Each attention's gate projection appended to its QKV projection as H extra output columns, so one
@@ -63,7 +64,8 @@ def main():
 
     def put_conv(conv, bn, out):
         scale, shift = bn_affine(sd, bn)
-        put(f'{out}.w', sd[f'{conv}.weight'] * scale[:, None, None, None])  # [cout, cin, kf, 3]
+        # [cout, cin, kf, 3] -> [kf, 3, cin, cout]: the [K, N] matrix of the conv as an implicit GEMM.
+        put(f'{out}.w', (sd[f'{conv}.weight'] * scale[:, None, None, None]).permute(2, 3, 1, 0))
         put(f'{out}.b', shift)
 
     scale, shift = bn_affine(sd, 'frontend.stem.bn1d')
