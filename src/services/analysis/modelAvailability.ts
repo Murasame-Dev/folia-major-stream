@@ -76,7 +76,7 @@ export const refreshModelAvailability = async (): Promise<AutomixModelsPresent> 
     try {
         answer = await ask();
     } catch (error) {
-        console.warn('[Automix] could not check which models are installed', error);
+        console.warn('[Analysis] could not check which models are installed', error);
         return present;
     }
     if (!answer) return present;
@@ -104,7 +104,7 @@ export const refreshModelAvailability = async (): Promise<AutomixModelsPresent> 
  */
 export const noteModelFailed = async (name: AutomixModelName): Promise<void> => {
     const stillThere = (await refreshModelAvailability())[name];
-    if (!stillThere) console.warn(`[Automix] ${name} produced nothing and its weights are gone;`
+    if (!stillThere) console.warn(`[Analysis] ${name} produced nothing and its weights are gone;`
         + ' will use it again if they come back');
 };
 

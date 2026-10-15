@@ -9,6 +9,7 @@ import {
     SONNET_BEAT_FX,
     applySonnetBeatFxLayers,
     createSonnetBeatFxReader,
+    onlyFrameReadTuningChanged,
     restoreSonnetBeatFxLayers,
 } from '@/components/visualizer/sonnet/sonnetBeatFx';
 
@@ -113,6 +114,21 @@ describe('beat clock readiness across a track change', () => {
         expect(isBeatFxReady()).toBe(false);
     });
 
+    it('keeps holding across a run of quick skips', () => {
+        vi.useFakeTimers();
+        beginBeatFxTrack('a');
+        setBeatFxEvents('a', [{ t: 1, kind: 'beat' }], 'beat_this');
+        beginBeatFxTrack('b');
+        vi.advanceTimersByTime(500);
+        beginBeatFxTrack('c');
+        expect(isBeatFxReady()).toBe(true);
+        vi.advanceTimersByTime(1000);
+        // 1.5 s after the first skip, but only 1 s after the second.
+        expect(isBeatFxReady()).toBe(true);
+        vi.advanceTimersByTime(1000);
+        expect(isBeatFxReady()).toBe(false);
+    });
+
     it('ends the hold the moment the next track answers', () => {
         beginBeatFxTrack('a');
         setBeatFxEvents('a', [{ t: 1, kind: 'beat' }], 'beat_this');
@@ -184,5 +200,19 @@ describe('Sonnet beat FX frame', () => {
         expect(view.mgGeoLayer.alpha).toBe(1);
         expect(view.mgFixedGeoLayer.alpha).toBe(1);
         expect(view.haloLayer.alpha).toBe(0.35);
+    });
+});
+
+describe('Sonnet tuning change', () => {
+    const base: SonnetTuning = { ...DEFAULT_SONNET_TUNING, smartBeatEnabled: true };
+
+    it('needs no scene rebuild when only the 轻拍 / 重拍 strengths moved', () => {
+        expect(onlyFrameReadTuningChanged(base, { ...base, beatIntensity: 1.6, downbeatIntensity: 0.2 })).toBe(true);
+        expect(onlyFrameReadTuningChanged(base, { ...base })).toBe(true);
+    });
+
+    it('rebuilds for anything a scene is built from, the switch included', () => {
+        expect(onlyFrameReadTuningChanged(base, { ...base, smartBeatEnabled: false })).toBe(false);
+        expect(onlyFrameReadTuningChanged(base, { ...base, beatIntensity: 1.6, enableTransitions: !base.enableTransitions })).toBe(false);
     });
 });

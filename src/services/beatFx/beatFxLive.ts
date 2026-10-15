@@ -75,7 +75,10 @@ let hearing = false;
 
 /** Switches the clock to a new track; events arrive later via `setBeatFxEvents`. */
 export const beginBeatFxTrack = (key: string | null) => {
-    holdUntil = key && state.events.length > 0 ? performance.now() + READY_HOLD_MS : 0;
+    // Held only from a track that was ready: its beats in, or itself still inside a hold. Keyed on the
+    // events alone, a run of quick skips dropped the frame at the second one.
+    const wasReady = isBeatFxReady();
+    holdUntil = key && wasReady ? Math.max(holdUntil, performance.now() + READY_HOLD_MS) : 0;
     trackKey = key;
     state.events = [];
     state.cursor = 0;

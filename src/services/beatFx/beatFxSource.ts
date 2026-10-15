@@ -38,8 +38,10 @@ const resolveTrackBeats = async (
     representation: PlaybackRepresentation | null,
 ): Promise<BeatFxTrackBeats> => {
     let note = 'beat_this returned no beats (no usable GPU, or a failed run)';
-    await refreshModelAvailability();
-    const grid = await getTrackBeatGrid(key, async () => {
+    let grid: Awaited<ReturnType<typeof getTrackBeatGrid>>;
+    try {
+        await refreshModelAvailability();
+        grid = await getTrackBeatGrid(key, async () => {
         // Asked before the read and the decode, which are seconds of work for nobody without one.
         if (typeof navigator === 'undefined' || !('gpu' in navigator)) {
             note = 'no WebGPU in this renderer';
@@ -56,7 +58,12 @@ const resolveTrackBeats = async (
             return null;
         }
         return toMidSide(buffer).mid;
-    });
+        });
+    } catch (error) {
+        // A throw here (a cache read, a worker, a GPU device lost mid-run) is "no beats" like any
+        // other: answered, so the caller's frame falls back, and not remembered, so a later play retries.
+        return { events: [], source: 'none', note: `beat lookup failed: ${String(error)}` };
+    }
     if (grid?.beats.length) return { events: mergeBeatFxEvents(grid.beats, grid.downbeats), source: 'beat_this' };
     return { events: [], source: 'none', note: canRunBeatThis() ? note : 'beat_this model not downloaded' };
 };

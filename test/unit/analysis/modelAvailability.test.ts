@@ -8,7 +8,7 @@ import {
 } from '@/services/analysis/modelAvailability';
 import { transitionCapabilities } from '@/services/automix/stems';
 
-// test/unit/automix/modelAvailability.test.ts
+// test/unit/analysis/modelAvailability.test.ts
 // The capability answer has to distinguish "this is the browser" from "the weights are not
 // downloaded yet". For most of this feature's life those were the same situation, so the check was
 // `typeof window.electron.separateStems === 'function'` - which on a desktop install with an empty

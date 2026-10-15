@@ -164,7 +164,8 @@ const runNow = async (chunks: Array<{ data: Float32Array; frames: number }>): Pr
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = null;
     ready ??= start();
-    if (!(await ready)) {
+    // A start that threw is a start that failed: not kept, or every later run would rethrow it.
+    if (!(await ready.catch(() => false))) {
         ready = null;
         return null;
     }

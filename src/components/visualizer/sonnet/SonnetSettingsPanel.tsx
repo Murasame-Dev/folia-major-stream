@@ -30,7 +30,7 @@ const SonnetSettingsPanel: React.FC<VisualizerSettingsPanelProps> = ({
         { value: 'full', label: t('options.sonnetOuterFrameFull') },
     ]), [t]);
 
-    const smartBeatAvailability = useSmartBeatAvailability();
+    const smartBeatAvailability = useSmartBeatAvailability(sonnetTuning.smartBeatEnabled);
     const smartBeatReason = smartBeatAvailability === 'ready'
         ? null
         : t(`options.beatFxUnavailable_${smartBeatAvailability}`);

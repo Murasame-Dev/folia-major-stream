@@ -2,6 +2,7 @@ import type { SongResult } from '../../types';
 import type { PlaybackRepresentation } from '../../types/playbackRecovery';
 import { getPlaybackSourceRef } from '../../utils/appPlaybackGuards';
 import { getCachedSongAudioBlob } from '../onlineMusic/resourceCache';
+import { isCacheableAudioResponse } from '../playbackRecovery/mediaCacheGuard';
 
 // src/services/analysis/trackAudio.ts
 // A track's audio for analysis: the bytes that are already on this machine, and the decode to the
@@ -11,7 +12,8 @@ import { getCachedSongAudioBlob } from '../onlineMusic/resourceCache';
 // (automix/stems.ts) and Sonnet's 智能动感模式 (beatFx/beatFxSource.ts) - and they had three copies
 // of the same "where are this track's bytes" ladder, already drifting apart: one fell through to the
 // media cache when the playback representation could not be read, the others gave up, and only one
-// could reach a local file with no URL. This is the ladder once. Downloading is not on it: whether a
+// could reach a local file with no URL. This is the ladder once. Downloading an online track is not on
+// it (a library source that is merely served over http - Navidrome, a stage feed - is read): whether a
 // track is worth bandwidth is each caller's question (only automix's profile ever says yes).
 //
 // The representation is passed in rather than looked up here. Callers that store a result under
@@ -53,7 +55,7 @@ export interface LocalTrackBytesOptions {
 
 /**
  * Reads a track's bytes from what is already here: the playback representation, the media cache,
- * a local URL, the local file's handle. Never the network.
+ * a local URL, the local file's handle. Never an online track's download.
  */
 export const readLocalTrackBytes = async (
     song: SongResult,
@@ -78,7 +80,17 @@ export const readLocalTrackBytes = async (
 
     if (audioUrl && isLocalAudioUrl(song, audioUrl)) {
         try {
-            return { bytes: await (await fetch(audioUrl)).arrayBuffer() };
+            const response = await fetch(audioUrl);
+            if (!response.ok) throw new Error(`local source responded ${response.status}`);
+            // A blob: or file: URL is the file itself. Anything else here is a library server over
+            // http, and an expired token there answers an error page: decoded, that would be
+            // remembered as a track that cannot be analysed for the rest of the session.
+            if (!audioUrl.startsWith('blob:') && !audioUrl.startsWith('file:')) {
+                const blob = await response.blob();
+                if (!isCacheableAudioResponse(response, blob)) return { skipped: 'the library server did not answer with audio' };
+                return { bytes: await blob.arrayBuffer() };
+            }
+            return { bytes: await response.arrayBuffer() };
         } catch (error) {
             console.warn('[Analysis] could not read a local track', error);
             return { skipped: 'the local file could not be read' };
@@ -89,10 +101,10 @@ export const readLocalTrackBytes = async (
     // track whose blob: URL belongs to a deck rather than to us. Its file is read off its handle.
     // A caller's own reader is asked whatever the source; it knows which songs it can read.
     const read = readLocalFile
-        ?? (localFileReader && getPlaybackSourceRef(song).kind !== 'online' ? () => localFileReader!(song) : null);
+        ?? (localFileReader && getPlaybackSourceRef(song).kind === 'local' ? () => localFileReader!(song) : null);
     if (!read) return null;
     const bytes = await read();
-    return bytes ? { bytes } : { skipped: 'the local file could not be reached' };
+    return bytes ? { bytes } : { skipped: 'not cached, and no file or URL to read it from' };
 };
 
 /**

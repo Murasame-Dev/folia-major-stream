@@ -86,6 +86,14 @@ export const resolveSonnetBeatFxFrame = (
 export const isSonnetBeatFxActive = (tuning: Pick<SonnetTuning, 'smartBeatEnabled'>): boolean =>
     tuning.smartBeatEnabled && isBeatFxReady();
 
+/** Tuning read only while drawing a frame; changing just these needs no scene rebuild. */
+const FRAME_READ_TUNING_KEYS: ReadonlySet<keyof SonnetTuning> = new Set(['beatIntensity', 'downbeatIntensity']);
+
+/** Whether `next` differs from `previous` only in tuning read per frame (the 轻拍 / 重拍 strengths). */
+export const onlyFrameReadTuningChanged = (previous: SonnetTuning, next: SonnetTuning): boolean =>
+    (Object.keys(next) as Array<keyof SonnetTuning>).every(key =>
+        FRAME_READ_TUNING_KEYS.has(key) || previous[key] === next[key]);
+
 /**
  * Creates the per-runtime frame reader. Returns null every frame the FX are not active, so callers
  * keep their original code path. Holds the treble smoothing state and the one frame it fills.

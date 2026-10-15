@@ -12,12 +12,17 @@ export type SmartBeatAvailability = 'ready' | 'desktopOnly' | 'noGpu' | 'noModel
 
 const hasBeatThisBridge = () => typeof window !== 'undefined' && typeof window.electron?.runBeatThis === 'function';
 
-export function useSmartBeatAvailability(): SmartBeatAvailability {
+/**
+ * Asked only while `enabled` - the switch is on. Off, nothing is probed (no adapter request, no model
+ * check) and the answer is 'ready', which a caller shows nothing for.
+ */
+export function useSmartBeatAvailability(enabled: boolean): SmartBeatAvailability {
     const present = useSyncExternalStore(subscribeModelAvailability, modelsPresent, modelsPresent);
     // Optimistic until the probe answers: a hint flashing "no GPU" on every open would be worse.
     const [gpu, setGpu] = useState(true);
 
     useEffect(() => {
+        if (!enabled) return;
         let cancelled = false;
         void refreshModelAvailability();
         void probeBeatThisGpu().then((found) => {
@@ -26,8 +31,9 @@ export function useSmartBeatAvailability(): SmartBeatAvailability {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [enabled]);
 
+    if (!enabled) return 'ready';
     if (!hasBeatThisBridge()) return 'desktopOnly';
     if (!gpu) return 'noGpu';
     return present.beat_this ? 'ready' : 'noModel';

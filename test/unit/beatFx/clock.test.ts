@@ -16,7 +16,7 @@ const play = (state: ReturnType<typeof createBeatFxClockState>, from: number, to
     return state;
 };
 
-describe('beatFxClock', () => {
+describe('beatFx clock', () => {
     const events = mergeBeatFxEvents([1, 1.5, 2, 2.5, 3], [1, 3]);
 
     it('merges downbeats onto their beats', () => {

@@ -17,7 +17,7 @@ import {
 import { loadPixi } from '../loadPixi';
 import { PixiSceneCache } from '../pixiSceneCache';
 import { sonnetDebugState } from './sonnetDebug';
-import { createSonnetBeatFxReader } from './sonnetBeatFx';
+import { createSonnetBeatFxReader, onlyFrameReadTuningChanged } from './sonnetBeatFx';
 import { readSonnetModulation, type SonnetShotFrameContext, updateSonnetShot } from './sonnetShotFrame';
 import { findSonnetActiveShotIndex, resolveSonnetSceneTransitionFrame } from './sonnetSceneFrame';
 import { drawSonnetFrameOverlay } from './sonnetFrameOverlay';
@@ -85,13 +85,6 @@ export interface SonnetRuntimeOptions {
     /** Mod-driven per-frame multipliers (e.g. `{ cameraScale: 1.4 }`). Defaults to 1 = no change. */
     modulation?: Record<string, number>;
 }
-
-/** Tuning read only while drawing a frame; changing just these needs no scene rebuild. */
-const FRAME_READ_TUNING_KEYS: ReadonlySet<keyof SonnetTuning> = new Set(['beatIntensity', 'downbeatIntensity']);
-
-const onlyFrameReadTuningChanged = (previous: SonnetTuning, next: SonnetTuning): boolean =>
-    (Object.keys(next) as Array<keyof SonnetTuning>).every(key =>
-        FRAME_READ_TUNING_KEYS.has(key) || previous[key] === next[key]);
 
 export class SonnetPixiRuntime {
     private readonly sceneCache = new PixiSceneCache<SceneView>({

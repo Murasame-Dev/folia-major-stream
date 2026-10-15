@@ -39,6 +39,10 @@ export function useBeatFxTrack(): boolean {
             setBeatFxEvents(key, result.events, result.source, result.note);
             // Only the case that needs explaining; a track with beats shows them.
             if (result.source === 'none') console.info(`[BeatFx] no beats for this track: ${result.note}`);
+        }).catch((error) => {
+            if (cancelled) return;
+            setBeatFxEvents(key, [], 'none', String(error));
+            console.warn('[BeatFx] beat lookup failed', error);
         });
         return () => {
             cancelled = true;
