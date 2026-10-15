@@ -38,7 +38,10 @@ const CHUNK_FRAMES = 1500;
 
 /**
  * Which export a run is for: final0, automix's download (and the CPU fallback's), or small0, bundled
- * with the app for the beat FX. Same kernels, different widths; the worker holds one at a time.
+ * with the app for the beat FX. Same kernels, different widths. The worker builds each on its one
+ * device the first time it is asked for and keeps both until the idle drop: with both features on, a
+ * track change asks for small0 and automix's look-ahead for final0, and reloading on every switch
+ * would re-read 41MB and rebuild every pipeline beside the visualizer for nothing.
  */
 export type BeatThisModel = 'beat_this' | 'beat_this_small';
 
@@ -46,17 +49,22 @@ interface Reply {
     id: number;
     result?: unknown;
     error?: string;
+    /** On a failed load: 'device' when the machine has no usable WebGPU, 'model' when only this export failed. */
+    scope?: 'device' | 'model';
 }
 
 interface Logits { beat: Float32Array[]; downbeat: Float32Array[] }
 
 let worker: Worker | null = null;
-/** Resolves once the worker has its model; null when there is none and this must be asked again. */
-let ready: Promise<boolean> | null = null;
-/** The model `ready` is loading or has loaded. */
-let loaded: BeatThisModel | null = null;
-/** Set when this machine cannot run the WebGPU path at all; for the rest of the session. */
+/** Per model: resolves once the worker has it built; absent when it must be asked for again. */
+const ready = new Map<BeatThisModel, Promise<boolean>>();
+/** Set when this machine cannot run the WebGPU path at all - no worker, adapter or device - for the session. */
 let unsupported = false;
+/**
+ * Models whose pipelines this device would not build, for the session. Kept per model so one export
+ * failing does not take the GPU from the other: small0 failing must not send automix to the CPU.
+ */
+const failedModels = new Set<BeatThisModel>();
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
 let nextId = 0;
 /**
@@ -70,8 +78,7 @@ const pending = new Map<number, (reply: Reply) => void>();
 const drop = () => {
     const dying = worker;
     worker = null;
-    ready = null;
-    loaded = null;
+    ready.clear();
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = null;
     for (const settle of pending.values()) settle({ id: -1, error: 'worker dropped' });
@@ -98,19 +105,15 @@ const ask = (message: Record<string, unknown>, transfer: Transferable[] = []): P
     });
 };
 
-const start = async (model: BeatThisModel): Promise<boolean> => {
-    const fetchWeights = window.electron?.getBeatThisGpuWeights;
-    if (typeof fetchWeights !== 'function') return false;
-    // Not there is the ordinary state until final0 is downloaded; asked again on the next track.
-    const found = await fetchWeights(model);
-    if (!found) return false;
-
+/** The worker, started if there is none; null (and `unsupported`) when this renderer cannot start one. */
+const spawn = (): Worker | null => {
+    if (worker) return worker;
     try {
         worker = new Worker(new URL('../../workers/beatThisGpu.worker.ts', import.meta.url), { type: 'module' });
     } catch (error) {
         console.warn(`[beat-this-gpu] no worker: ${error}`);
         unsupported = true;
-        return false;
+        return null;
     }
     worker.onmessage = (event: MessageEvent<Reply>) => {
         const settle = pending.get(event.data.id);
@@ -122,17 +125,31 @@ const start = async (model: BeatThisModel): Promise<boolean> => {
         console.warn(`[beat-this-gpu] worker error: ${event.message}`);
         drop();
     };
+    return worker;
+};
 
-    const reply = await ask({ kind: 'load', weights: found.weights, manifest: found.manifest }, [found.weights.buffer]);
+const start = async (model: BeatThisModel): Promise<boolean> => {
+    const fetchWeights = window.electron?.getBeatThisGpuWeights;
+    if (typeof fetchWeights !== 'function') return false;
+    // Not there is the ordinary state until final0 is downloaded; asked again on the next track.
+    const found = await fetchWeights(model);
+    if (!found || !spawn()) return false;
+
+    const reply = await ask({ kind: 'load', model, weights: found.weights, manifest: found.manifest }, [found.weights.buffer]);
     if (reply.error) {
         // Before the first chunk: no WebGPU, no adapter, or a pipeline this device will not build.
-        // None of those changes within a session.
-        console.warn(`[beat-this-gpu] unavailable, falling back to the CPU: ${reply.error}`);
-        unsupported = true;
-        drop();
+        // None of those changes within a session - but only the first three are the machine's.
+        console.warn(`[beat-this-gpu] ${model} unavailable: ${reply.error}`);
+        if (reply.scope === 'model') {
+            failedModels.add(model);
+            ready.delete(model);
+        } else {
+            unsupported = true;
+            drop();
+        }
         return false;
     }
-    console.log(`[beat-this-gpu] loaded on ${reply.result}`);
+    console.log(`[beat-this-gpu] ${model} loaded on ${reply.result}`);
     return true;
 };
 
@@ -164,7 +181,7 @@ export const runBeatThisGpu = (
     chunks: Array<{ data: Float32Array; frames: number }>,
     model: BeatThisModel = 'beat_this',
 ): Promise<Logits | null> => {
-    if (unsupported || typeof window === 'undefined' || typeof Worker === 'undefined') return Promise.resolve(null);
+    if (unsupported || failedModels.has(model) || typeof window === 'undefined' || typeof Worker === 'undefined') return Promise.resolve(null);
     if (!chunks.length || chunks.some(chunk => chunk.frames < 1 || chunk.frames > CHUNK_FRAMES)) return Promise.resolve(null);
     const run = queue.then(() => runNow(chunks, model));
     queue = run.catch(() => null);
@@ -172,23 +189,22 @@ export const runBeatThisGpu = (
 };
 
 const runNow = async (chunks: Array<{ data: Float32Array; frames: number }>, model: BeatThisModel): Promise<Logits | null> => {
-    if (unsupported) return null;
+    if (unsupported || failedModels.has(model)) return null;
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = null;
-    // One model on the device at a time. The two callers rarely alternate - automix analyses minutes
-    // ahead, the beat FX once per new track - and a switch is a reload of a few MB, while holding both
-    // would keep final0's activations and weights resident beside the visualizer for nothing.
-    if (loaded !== model) drop();
-    loaded = model;
-    ready ??= start(model);
-    // A start that threw is a start that failed: not kept, or every later run would rethrow it.
-    if (!(await ready.catch(() => false))) {
-        ready = null;
+    let loading = ready.get(model);
+    if (!loading) {
+        loading = start(model);
+        ready.set(model, loading);
+    }
+    // A start that threw or failed is not kept, or every later run would rethrow or repeat it.
+    if (!(await loading.catch(() => false))) {
+        if (ready.get(model) === loading) ready.delete(model);
         return null;
     }
     // Copied, not transferred: the caller still owns the spectrogram it chunked.
     const data = chunks.map(chunk => Float32Array.from(chunk.data.subarray(0, chunk.frames * 128)));
-    const reply = await ask({ kind: 'run', chunks: data }, data.map(chunk => chunk.buffer));
+    const reply = await ask({ kind: 'run', model, chunks: data }, data.map(chunk => chunk.buffer));
     if (reply.error) {
         console.warn(`[beat-this-gpu] run failed, falling back to the CPU for this track: ${reply.error}`);
         drop();

@@ -1,4 +1,5 @@
 import type { Table } from 'dexie';
+import { isBeatGridKey } from '../analysis/beatGridKeys';
 import {
   appDatabase,
   LOCAL_LIBRARY_ARTIST_SPLIT_MARKER_KEY,
@@ -32,8 +33,7 @@ export const getCacheTableName = (key: string): CacheTableName => {
   if (key.startsWith('audio_') || key.startsWith('cover_')) return 'media_cache';
   if (
     key.startsWith('automix_profile_') ||
-    key.startsWith('beat_this_grid_') ||
-    key.startsWith('beat_this_small_grid_') ||
+    isBeatGridKey(key) ||
     key.startsWith('lyric_') ||
     key.startsWith('theme_') ||
     key.startsWith('replayGain_') ||
@@ -181,9 +181,7 @@ const matchesCategory = (key: string, category: CacheCategory): boolean => {
   //
   // A track's Beat This! beats (services/analysis/beatGrid.ts) are the same kind of thing - a model
   // pass to rebuild, read by automix and by the beat FX - and are cleared with the profiles.
-  if (category === 'analysis') {
-    return key.startsWith('automix_profile_') || key.startsWith('beat_this_grid_') || key.startsWith('beat_this_small_grid_');
-  }
+  if (category === 'analysis') return key.startsWith('automix_profile_') || isBeatGridKey(key);
   // A track's ReplayGain describes the audio and arrives with it, so it is cleared with it. It is
   // counted here but NOT in mediaCount below, which means "songs cached" and would otherwise
   // double for every track that has both.

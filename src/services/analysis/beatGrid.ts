@@ -1,6 +1,7 @@
 import { getFromCache, saveToCache } from '../db';
 import { melSpectrogramOffThread } from '../automix/analysisOffThread';
 import { analyseBeatGrid, canRunBeatThis, type BeatGrid, type BeatThisModel } from './beatThis';
+import { BEAT_GRID_PREFIXES } from './beatGridKeys';
 
 // src/services/analysis/beatGrid.ts
 // A whole track's beats from Beat This!, run once and kept: on disk under the track's analysis key,
@@ -21,8 +22,8 @@ import { analyseBeatGrid, canRunBeatThis, type BeatGrid, type BeatThisModel } fr
 // joined as the other's: automix would otherwise build transitions on small0's downbeats, and the
 // beat FX would land differently on a track depending on whether automix had seen it.
 //
-// Both key prefixes are registered in services/repositories/cacheRepository.ts as analysis data, so
-// "clear analysis cache" clears these with the profiles they feed.
+// Both key prefixes (beatGridKeys.ts) are registered in services/repositories/cacheRepository.ts as
+// analysis data, so "clear analysis cache" clears these with the profiles they feed.
 
 /** Bumped when the model, the spectrogram or the peak picking changes what a track's beats are. */
 const BEAT_GRID_VERSION = 1;
@@ -33,13 +34,7 @@ interface StoredBeatGrid {
     downbeats: number[];
 }
 
-/** final0 keeps the prefix it always had, so lists stored before small0 existed stay valid. */
-const STORAGE_PREFIX: Record<BeatThisModel, string> = {
-    beat_this: 'beat_this_grid_',
-    beat_this_small: 'beat_this_small_grid_',
-};
-
-const storageKey = (key: string, model: BeatThisModel) => `${STORAGE_PREFIX[model]}${key}`;
+const storageKey = (key: string, model: BeatThisModel) => `${BEAT_GRID_PREFIXES[model]}${key}`;
 
 const isTimeList = (value: unknown): value is number[] =>
     Array.isArray(value) && value.every(time => typeof time === 'number' && Number.isFinite(time));

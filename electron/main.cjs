@@ -2089,7 +2089,9 @@ const displaySleepBlocker = createDisplaySleepBlocker(powerSaveBlocker);
 // Settings > Developer. Created BEFORE the analysis host, which logs through it.
 createDebugHost({ app, ipcMain, store, BrowserWindow });
 
-const analysisHost = createAnalysisHost({ app, ipcMain, getModelsDirs: getModelsDirectories });
+const analysisHost = createAnalysisHost({
+  app, ipcMain, getModelsDirs: getModelsDirectories, getBundledModelsDir: getBundledModelsDirectory,
+});
 
 function buildPlaybackSyncBridgeStatus() {
   return {

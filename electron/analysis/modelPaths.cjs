@@ -34,12 +34,14 @@ const MODEL_FILES = {
 /**
  * Models that ship inside the app rather than download: not in MODEL_NAMES (the settings page's list,
  * and what `modelsPresent` answers), not in shared/modelManifest.json (what a download or "delete
- * all" acts on). Resolved through the same directories, so the installer's copy is found last and a
- * file the listener put in their own folder still wins.
+ * all" acts on). Resolved from the installer's own models directory ONLY: a pinned file has no
+ * business being replaced by one of the same name in a folder the listener chose, which nothing
+ * would hash-check.
  *
  * beat_this_small is the authors' small0 checkpoint (2.1M parameters against final0's 20M), exported
- * like final0 with --f16 into one 4.7MB file kept in git under models/. Sonnet's 智能动感模式 runs it,
- * on the GPU only; automix keeps final0, and the CPU fallback never sees this file.
+ * like final0 with --f16 into one 4.7MB file. Not in git: packaging/beat-this-small pulls the pinned
+ * release into models/ at build time, and extraResources ships it. Sonnet's 智能动感模式 runs it, on
+ * the GPU only; automix keeps final0, and the CPU fallback never sees this file.
  */
 const BUNDLED_MODEL_NAMES = ['beat_this_small'];
 

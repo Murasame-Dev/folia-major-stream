@@ -33,5 +33,7 @@ describe('loadBeatFxTrackBeats', () => {
         expect(second.source).toBe('beat_this');
         expect(second.events.length).toBeGreaterThan(0);
         expect(getTrackBeatGrid).toHaveBeenCalledTimes(2);
+        // small0 only: the beat FX never ask for, read or share automix's final0 lists.
+        for (const call of getTrackBeatGrid.mock.calls) expect(call[2]).toEqual({ model: 'beat_this_small' });
     });
 });
