@@ -38,15 +38,17 @@ const [dir, ...names] = process.argv.slice(2);
 const T = MODEL_CHUNK_FRAMES;
 let allExact = true;
 for (const name of names) {
-    const meta = JSON.parse(fs.readFileSync(path.join(dir, `${name}.meta.json`), 'utf8')) as { frames: number; starts: number[] };
+    // chunkFrames: each chunk's real length when one is short (a track under 30 s); the files keep
+    // the [chunks, 2, 1500] layout regardless, with the tail of a short chunk unused.
+    const meta = JSON.parse(fs.readFileSync(path.join(dir, `${name}.meta.json`), 'utf8')) as { frames: number; starts: number[]; chunkFrames?: number[] };
     const grid = (file: string) => {
         const bytes = fs.readFileSync(path.join(dir, file));
         const logits = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
         const predictions: ChunkPrediction[] = meta.starts.map((start, index) => ({
             start,
-            frames: T,
-            beat: logits.subarray(index * 2 * T, index * 2 * T + T),
-            downbeat: logits.subarray(index * 2 * T + T, index * 2 * T + 2 * T),
+            frames: meta.chunkFrames?.[index] ?? T,
+            beat: logits.subarray(index * 2 * T, index * 2 * T + (meta.chunkFrames?.[index] ?? T)),
+            downbeat: logits.subarray(index * 2 * T + T, index * 2 * T + T + (meta.chunkFrames?.[index] ?? T)),
         }));
         const track = aggregateChunks(predictions, meta.frames);
         return beatsFromLogits(track.beat, track.downbeat);
