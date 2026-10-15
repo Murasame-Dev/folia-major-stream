@@ -144,6 +144,8 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u
  * Y[M, N] = X[M, K] . W[K, N] + bias, with an epilogue picked by `mode`:
  * 0 = store, 1 = GELU then store, 2 = add into Y (the residual stream, updated in place).
  * 64x64 output tile per workgroup, 4x4 per invocation, K in steps of 16 through workgroup memory.
+ * The A tile is stored transposed ([k][row]) so an invocation's four rows are one vec4 read, and
+ * its four columns of B are another: two workgroup-memory reads per 16 FMAs.
  */
 export const MATMUL = /* wgsl */ `
 ${GELU}
@@ -153,46 +155,55 @@ struct P { m: u32, n: u32, k: u32, mode: u32 }
 @group(0) @binding(2) var<storage, read> bias: array<f32>;
 @group(0) @binding(3) var<storage, read_write> y: array<f32>;
 @group(0) @binding(4) var<uniform> p: P;
-var<workgroup> as_: array<f32, 1024>; // [64 rows][16 k]
-var<workgroup> bs_: array<f32, 1024>; // [16 k][64 cols]
+var<workgroup> as_: array<vec4f, 256>; // [16 k][16 row-quads]
+var<workgroup> bs_: array<vec4f, 256>; // [16 k][16 col-quads]
 @compute @workgroup_size(16, 16)
 fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u, @builtin(local_invocation_index) li: u32) {
   let row0 = wg.y * 64u;
   let col0 = wg.x * 64u;
-  var acc: array<array<f32, 4>, 4>;
+  var acc: array<vec4f, 4>; // acc[j] = rows 4*l.y..+3 of column 4*l.x + j
+  // Loader roles: A - invocation li reads k = li % 16 of row quad li / 16; B - k = li / 16, col quad li % 16.
+  let aK = li % 16u;
+  let aQuad = li / 16u;
+  let bK = li / 16u;
+  let bQuad = li % 16u;
   for (var k0 = 0u; k0 < p.k; k0 += 16u) {
-    for (var i = 0u; i < 4u; i++) {
-      let idx = li + i * 256u;
-      let ar = row0 + idx / 16u;
-      let ak = k0 + idx % 16u;
-      var av = 0.0;
-      if (ar < p.m && ak < p.k) { av = x[ar * p.k + ak]; }
-      as_[idx] = av;
-      let bk = k0 + idx / 64u;
-      let bc = col0 + idx % 64u;
-      var bv = 0.0;
-      if (bk < p.k && bc < p.n) { bv = w[bk * p.n + bc]; }
-      bs_[idx] = bv;
+    var av = vec4f(0.0);
+    let ak = k0 + aK;
+    if (ak < p.k) {
+      for (var r = 0u; r < 4u; r++) {
+        let row = row0 + aQuad * 4u + r;
+        if (row < p.m) { av[r] = x[row * p.k + ak]; }
+      }
     }
+    as_[aK * 16u + aQuad] = av;
+    var bv = vec4f(0.0);
+    let bk = k0 + bK;
+    if (bk < p.k) {
+      for (var c = 0u; c < 4u; c++) {
+        let col = col0 + bQuad * 4u + c;
+        if (col < p.n) { bv[c] = w[bk * p.n + col]; }
+      }
+    }
+    bs_[bK * 16u + bQuad] = bv;
     workgroupBarrier();
     for (var kk = 0u; kk < 16u; kk++) {
-      var a: array<f32, 4>;
-      var b: array<f32, 4>;
-      for (var i = 0u; i < 4u; i++) { a[i] = as_[(l.y * 4u + i) * 16u + kk]; }
-      for (var j = 0u; j < 4u; j++) { b[j] = bs_[kk * 64u + l.x * 4u + j]; }
-      for (var i = 0u; i < 4u; i++) {
-        for (var j = 0u; j < 4u; j++) { acc[i][j] += a[i] * b[j]; }
-      }
+      let a = as_[kk * 16u + l.y];
+      let b = bs_[kk * 16u + l.x];
+      acc[0] = fma(a, vec4f(b.x), acc[0]);
+      acc[1] = fma(a, vec4f(b.y), acc[1]);
+      acc[2] = fma(a, vec4f(b.z), acc[2]);
+      acc[3] = fma(a, vec4f(b.w), acc[3]);
     }
     workgroupBarrier();
   }
-  for (var i = 0u; i < 4u; i++) {
-    let r = row0 + l.y * 4u + i;
-    if (r >= p.m) { continue; }
-    for (var j = 0u; j < 4u; j++) {
-      let c = col0 + l.x * 4u + j;
-      if (c >= p.n) { continue; }
-      var v = acc[i][j] + bias[c];
+  for (var j = 0u; j < 4u; j++) {
+    let c = col0 + l.x * 4u + j;
+    if (c >= p.n) { continue; }
+    for (var i = 0u; i < 4u; i++) {
+      let r = row0 + l.y * 4u + i;
+      if (r >= p.m) { continue; }
+      var v = acc[j][i] + bias[c];
       let o = r * p.n + c;
       if (p.mode == 1u) { v = gelu(v); }
       if (p.mode == 2u) { v += y[o]; }
