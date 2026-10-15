@@ -11,7 +11,19 @@ const path = require('path');
 //   npx rolldown dev/beat-this-wgsl/harness.ts -o $OUT/harness.js -f iife -p browser
 //   BTW_DIR=$OUT BTW_WEIGHTS=... BTW_CHUNKS=chunks.f32 [BTW_STAGES=1] [BTW_REPEAT=5] npx electron dev/beat-this-wgsl/main.cjs
 //
-// Exit code 0 when the run completed; correctness is judged by the comparison script, not here.
+// Exit code 0 when the run completed; correctness is judged by the comparison scripts, not here.
+// The whole acceptance run, from the official checkpoint to identical beat lists:
+//
+//   1. python build/beat_this_wgsl/export_weights.py beat_this-final0.ckpt $W/final0.bin
+//   2. layer by layer, chunk 0 of a [n, 1500, 128] f32 mel file:
+//        python build/beat_this_wgsl/reference.py beat_this-final0.ckpt chunks.npy $REF
+//        BTW_DIR=$OUT BTW_WEIGHTS=$W/final0.bin BTW_CHUNKS=chunks.f32 BTW_STAGES=1 npx electron dev/beat-this-wgsl/main.cjs
+//        python build/beat_this_wgsl/compare_stages.py $REF $OUT
+//   3. whole tracks through the app's own mel / chunking / peak picking, against ORT on the same chunks:
+//        BTW_DIR=$OUT BTW_WEIGHTS=$W/final0.bin BTW_SONGS=a.mp3,b.mp3 npx electron dev/beat-this-wgsl/main.cjs
+//        python build/beat_this_wgsl/ort_chunks.py models/beat_this.onnx $OUT a b
+//        npx rolldown dev/beat-this-wgsl/compare-songs.ts -o $OUT/compare.cjs -f cjs -p node && node $OUT/compare.cjs $OUT a b
+//      (exit 0 only when every track's beat and downbeat lists are identical)
 
 const dir = process.env.BTW_DIR;
 if (!dir) {
