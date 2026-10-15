@@ -1,9 +1,11 @@
 // src/services/automix/beatThisWgsl/kernels.ts
-// WGSL sources for the hand-written Beat This! forward pass. Plain fp32, one kernel per step, no
-// fusion beyond what is free (bias and activation in the matmul epilogue, the gate in the attention
-// epilogue). This is the correctness baseline: the fp16 variants (f16 storage and multiplies, f32
-// for the RMSNorm sum of squares, the softmax sum and long matmul accumulations) and the fused
-// kernels are both measured against it.
+// WGSL sources for the hand-written Beat This! forward pass, fp32. RMSNorm and RoPE have no kernels
+// of their own: the norm's gamma is folded into the next Linear's weights at export, and the matmul
+// scales each output row by 1/||x|| from the sum of squares of the A rows it already reads; RoPE is
+// applied to the q/k columns in the QKV matmul's epilogue. Bias, GELU and the residual add are
+// matmul epilogues too, and the gate is the attention's epilogue. The fp16 variants (f16 storage and
+// multiplies, f32 for the sum of squares, the softmax sum and long accumulations) are measured
+// against this path.
 //
 // Activation layout everywhere in the frontend is [F, T, C] row-major (channel-last): a token is one
 // (frequency, frame) pair, so every Linear is a plain [tokens, C] matmul, and the frequency- and
@@ -112,51 +114,37 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u
 }
 `;
 
-/** RMSNorm as F.normalize(x) * sqrt(D) * gamma, the sqrt(D) pre-multiplied into gamma. One workgroup per row. */
-export const RMS_NORM = /* wgsl */ `
-struct P { rows: u32, dim: u32 }
-@group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read> gamma: array<f32>;
-@group(0) @binding(2) var<storage, read_write> y: array<f32>;
-@group(0) @binding(3) var<uniform> p: P;
-var<workgroup> red: array<f32, 64>;
-@compute @workgroup_size(64)
-fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u) {
-  let row = wg.x + wg.y * 65535u;
-  let base = row * p.dim;
-  var s = 0.0;
-  if (row < p.rows) {
-    for (var c = l.x; c < p.dim; c += 64u) { let v = x[base + c]; s += v * v; }
-  }
-  red[l.x] = s;
-  workgroupBarrier();
-  for (var stride = 32u; stride > 0u; stride >>= 1u) {
-    if (l.x < stride) { red[l.x] += red[l.x + stride]; }
-    workgroupBarrier();
-  }
-  if (row >= p.rows) { return; }
-  let inv = 1.0 / max(sqrt(red[0]), 1e-12);
-  for (var c = l.x; c < p.dim; c += 64u) { y[base + c] = x[base + c] * inv * gamma[c]; }
-}
-`;
+/** MATMUL epilogue flags, combined with |. */
+export const MATMUL_GELU = 1;
+export const MATMUL_RESIDUAL = 2;
+export const MATMUL_NORM = 4;
+export const MATMUL_ROPE = 8;
 
 /**
- * Y[M, N] = X[M, K] . W[K, N] + bias, with an epilogue picked by `mode`:
- * 0 = store, 1 = GELU then store, 2 = add into Y (the residual stream, updated in place).
+ * Y[M, N] = X[M, K] . W[K, N] + bias, with optional fused steps picked by `flags`:
+ * - NORM: RMSNorm of each X row folded in. The gamma is already in W's rows (export_weights.py),
+ *   so the row only needs scaling by 1/max(||x||, 1e-12); the sum of squares is gathered from the
+ *   A elements this workgroup loads anyway, so the normalised input is never written out.
+ * - ROPE: interleaved rotary embedding on the q and k columns (the first 2 * dmodel), applied after
+ *   the bias. An invocation's four adjacent columns hold two whole (even, odd) pairs. The row's
+ *   position along the attended axis is (row / posDiv) % posMod; cos/sin come from a CPU-built
+ *   table with torch's f32 angle (position * freq), so large positions round alike.
+ * - GELU, then RESIDUAL: add into Y (the residual stream, updated in place).
  * 64x64 output tile per workgroup, 4x4 per invocation, K in steps of 16 through workgroup memory.
- * The A tile is stored transposed ([k][row]) so an invocation's four rows are one vec4 read, and
- * its four columns of B are another: two workgroup-memory reads per 16 FMAs.
+ * The A tile is stored transposed so an invocation's four rows are one vec4 read, and its four
+ * columns of B another: two workgroup-memory reads per 16 FMAs.
  */
 export const MATMUL = /* wgsl */ `
 ${GELU}
-struct P { m: u32, n: u32, k: u32, mode: u32 }
+struct P { m: u32, n: u32, k: u32, flags: u32, posDiv: u32, posMod: u32, dmodel: u32, pad: u32 }
 @group(0) @binding(0) var<storage, read> x: array<f32>;
 @group(0) @binding(1) var<storage, read> w: array<f32>;
 @group(0) @binding(2) var<storage, read> bias: array<f32>;
 @group(0) @binding(3) var<storage, read_write> y: array<f32>;
-@group(0) @binding(4) var<uniform> p: P;
-var<workgroup> as_: array<vec4f, 256>; // [16 k][16 row-quads]
-var<workgroup> bs_: array<vec4f, 256>; // [16 k][16 col-quads]
+@group(0) @binding(4) var<storage, read> table: array<f32>; // [pos][16][cos, sin]
+@group(0) @binding(5) var<uniform> p: P;
+var<workgroup> as_: array<vec4f, 256>; // [16 k][16 row quads]; afterwards the per-loader row sums of squares
+var<workgroup> bs_: array<vec4f, 256>; // [16 k][16 col quads]
 @compute @workgroup_size(16, 16)
 fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u, @builtin(local_invocation_index) li: u32) {
   let row0 = wg.y * 64u;
@@ -167,6 +155,7 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u
   let aQuad = li / 16u;
   let bK = li / 16u;
   let bQuad = li % 16u;
+  var squares = vec4f(0.0);
   for (var k0 = 0u; k0 < p.k; k0 += 16u) {
     var av = vec4f(0.0);
     let ak = k0 + aK;
@@ -176,6 +165,7 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u
         if (row < p.m) { av[r] = x[row * p.k + ak]; }
       }
     }
+    squares = fma(av, av, squares);
     as_[aK * 16u + aQuad] = av;
     var bv = vec4f(0.0);
     let bk = k0 + bK;
@@ -197,48 +187,45 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u
     }
     workgroupBarrier();
   }
-  for (var j = 0u; j < 4u; j++) {
-    let c = col0 + l.x * 4u + j;
-    if (c >= p.n) { continue; }
-    for (var i = 0u; i < 4u; i++) {
-      let r = row0 + l.y * 4u + i;
-      if (r >= p.m) { continue; }
-      var v = acc[j][i] + bias[c];
-      let o = r * p.n + c;
-      if (p.mode == 1u) { v = gelu(v); }
-      if (p.mode == 2u) { v += y[o]; }
-      y[o] = v;
-    }
+  // The 16 loaders of row quad q are invocations 16q..16q+15; their partial sums meet in as_.
+  as_[li] = squares;
+  workgroupBarrier();
+  var rowScale = vec4f(1.0);
+  if ((p.flags & 4u) != 0u) {
+    var total = vec4f(0.0);
+    for (var t = 0u; t < 16u; t++) { total += as_[l.y * 16u + t]; }
+    rowScale = 1.0 / max(sqrt(total), vec4f(1e-12));
   }
-}
-`;
-
-/**
- * Interleaved rotary embedding applied in place to the q and k columns of a [rows, 3D + H] QKV+gate
- * buffer. The position of a row along the attended axis is (row / posDiv) % posMod; cos/sin come from
- * a table built on the CPU with the same f32 angle torch computes, so large positions round alike.
- */
-export const ROPE = /* wgsl */ `
-struct P { rows: u32, heads: u32, width: u32, dmodel: u32, posDiv: u32, posMod: u32 }
-@group(0) @binding(0) var<storage, read_write> qkv: array<f32>;
-@group(0) @binding(1) var<storage, read> table: array<f32>; // [pos][16][cos, sin]
-@group(0) @binding(2) var<uniform> p: P;
-@compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) id: vec3u) {
-  let i = id.x;
-  if (i >= p.rows * p.heads * 16u) { return; }
-  let pair = i % 16u;
-  let h = (i / 16u) % p.heads;
-  let row = i / (16u * p.heads);
-  let pos = (row / p.posDiv) % p.posMod;
-  let c = table[(pos * 16u + pair) * 2u];
-  let s = table[(pos * 16u + pair) * 2u + 1u];
-  for (var part = 0u; part < 2u; part++) {
-    let o = row * p.width + part * p.dmodel + h * 32u + pair * 2u;
-    let x0 = qkv[o];
-    let x1 = qkv[o + 1u];
-    qkv[o] = x0 * c - x1 * s;
-    qkv[o + 1u] = x1 * c + x0 * s;
+  for (var i = 0u; i < 4u; i++) {
+    let r = row0 + l.y * 4u + i;
+    if (r >= p.m) { continue; }
+    var v: array<f32, 4>;
+    for (var j = 0u; j < 4u; j++) {
+      let c = min(col0 + l.x * 4u + j, p.n - 1u);
+      v[j] = acc[j][i] * rowScale[i] + bias[c];
+    }
+    let c0 = col0 + l.x * 4u;
+    if ((p.flags & 8u) != 0u && c0 < 2u * p.dmodel) {
+      let pos = (r / p.posDiv) % p.posMod;
+      for (var pair = 0u; pair < 2u; pair++) {
+        let t = (pos * 16u + ((c0 + 2u * pair) % 32u) / 2u) * 2u;
+        let cs = table[t];
+        let sn = table[t + 1u];
+        let x0 = v[2u * pair];
+        let x1 = v[2u * pair + 1u];
+        v[2u * pair] = x0 * cs - x1 * sn;
+        v[2u * pair + 1u] = x1 * cs + x0 * sn;
+      }
+    }
+    for (var j = 0u; j < 4u; j++) {
+      let c = c0 + j;
+      if (c >= p.n) { continue; }
+      var res = v[j];
+      let o = r * p.n + c;
+      if ((p.flags & 1u) != 0u) { res = gelu(res); }
+      if ((p.flags & 2u) != 0u) { res += y[o]; }
+      y[o] = res;
+    }
   }
 }
 `;
