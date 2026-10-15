@@ -9,7 +9,10 @@ const path = require('path');
 // chunk 0) next to the inputs. Never touches the app's own profile - userData is a throwaway dir.
 //
 //   npx rolldown dev/beat-this-wgsl/harness.ts -o $OUT/harness.js -f iife -p browser
-//   BTW_DIR=$OUT BTW_WEIGHTS=... BTW_CHUNKS=chunks.f32 [BTW_STAGES=1] [BTW_REPEAT=5] npx electron dev/beat-this-wgsl/main.cjs
+//   BTW_DIR=$OUT BTW_WEIGHTS=... BTW_CHUNKS=chunks.f32 [BTW_STAGES=1] [BTW_REPEAT=5] [BTW_PROFILE=1] npx electron dev/beat-this-wgsl/main.cjs
+//
+// BTW_PROFILE=1 times every dispatch with timestamp-query and writes profile.json (median per
+// dispatch over the repeats) plus a summary by kernel and by network stage.
 //
 // Exit code 0 when the run completed; correctness is judged by the comparison scripts, not here.
 // The whole acceptance run, from the official checkpoint to identical beat lists:
@@ -30,6 +33,8 @@ if (!dir) {
     console.error('BTW_DIR is required');
     process.exit(2);
 }
+// Unquantised timestamp-query, so per-kernel GPU times are real rather than rounded to 100 us.
+app.commandLine.appendSwitch('enable-webgpu-developer-features');
 app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'btw-userdata-')));
 
 ipcMain.handle('btw-config', () => ({
@@ -39,6 +44,7 @@ ipcMain.handle('btw-config', () => ({
     stages: process.env.BTW_STAGES === '1',
     repeat: Number(process.env.BTW_REPEAT || 5),
     songs: (process.env.BTW_SONGS || '').split(',').filter(Boolean),
+    profile: process.env.BTW_PROFILE === '1',
 }));
 ipcMain.on('btw-log', (_event, line) => console.log(line));
 ipcMain.on('btw-done', (_event, code) => app.exit(code));

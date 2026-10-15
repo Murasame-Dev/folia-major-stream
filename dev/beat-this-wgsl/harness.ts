@@ -26,7 +26,9 @@ async function main() {
     if (!adapter) throw new Error('no WebGPU adapter');
     const info = adapter.info;
     log(`adapter: ${info.vendor} ${info.architecture} ${info.description} f16=${adapter.features.has('shader-f16')}`);
-    const device = await adapter.requestDevice();
+    const device = await adapter.requestDevice({
+        requiredFeatures: config.profile && adapter.features.has('timestamp-query') ? ['timestamp-query'] : [],
+    });
     device.addEventListener('uncapturederror', (event) => log(`GPU error: ${(event as GPUUncapturedErrorEvent).error.message}`));
 
     const manifest: BeatThisWgslManifest = JSON.parse(fs.readFileSync(config.weights.replace(/\.bin$/, '.json'), 'utf8'));
@@ -66,12 +68,47 @@ async function main() {
             times.push((await model.run(chunks.subarray(i * perChunk, (i + 1) * perChunk))).gpuMs);
         }
     }
+    if (config.profile) await profileRuns(model, chunks.subarray(perChunk, 2 * perChunk), Math.max(3, config.repeat), config.out);
     if (times.length) {
         times.sort((a, b) => a - b);
         log(`timed ${times.length} runs: median ${times[times.length >> 1].toFixed(1)} ms, min ${times[0].toFixed(1)} ms`);
     }
     model.destroy();
     ipcRenderer.send('btw-done', 0);
+}
+
+/** Times every dispatch over `repeats` runs of one chunk and prints where the GPU time goes. */
+async function profileRuns(model: BeatThisWgsl, chunk: Float32Array, repeats: number, out: string) {
+    const runs: { label: string; ms: number }[][] = [];
+    for (let r = 0; r < repeats; r += 1) {
+        const result = await model.run(chunk, { profile: true });
+        if (!result.profile) {
+            log('profile: device has no timestamp-query');
+            return;
+        }
+        runs.push(result.profile);
+    }
+    const median = (values: number[]) => [...values].sort((a, b) => a - b)[values.length >> 1];
+    const rows = runs[0].map((step, index) => ({ label: step.label, ms: median(runs.map(run => run[index].ms)) }));
+    fs.writeFileSync(path.join(out, 'profile.json'), JSON.stringify(rows, null, 1));
+    const total = rows.reduce((sum, row) => sum + row.ms, 0);
+    const summarize = (title: string, key: (label: string) => string) => {
+        const groups = new Map<string, { ms: number; count: number }>();
+        for (const row of rows) {
+            const group = groups.get(key(row.label)) ?? { ms: 0, count: 0 };
+            group.ms += row.ms;
+            group.count += 1;
+            groups.set(key(row.label), group);
+        }
+        log(`-- ${title}`);
+        [...groups.entries()].sort((a, b) => b[1].ms - a[1].ms).forEach(([name, group]) =>
+            log(`${name.padEnd(34)} ${group.ms.toFixed(2).padStart(8)} ms ${((100 * group.ms) / total).toFixed(1).padStart(5)}%  x${group.count}`));
+    };
+    log(`profile: ${rows.length} dispatches, ${total.toFixed(1)} ms GPU (median of ${repeats})`);
+    // "block0.time.attn matmul qkvg.w" -> kernel "matmul qkvg.w"; stage "block0.time".
+    summarize('by kernel', label => label.split(' ').slice(1).join(' ').replace(/^(\w+) (\w+)\..*$/, '$1 $2'));
+    summarize('by stage', label => label.split(' ')[0].replace(/\.(attn|ff)$/, ''));
+    summarize('by stage + kernel', label => `${label.split(' ')[0].replace(/\.(attn|ff)$/, '')} ${label.split(' ')[1]}`);
 }
 
 /** Mid (L+R)/2 at the Beat This! rate; decodeAudioData does the resampling, as in the app. */
