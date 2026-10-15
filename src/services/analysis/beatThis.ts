@@ -1,4 +1,6 @@
-import { runBeatThisGpu } from './beatThisGpu';
+import { runBeatThisGpu, type BeatThisModel } from './beatThisGpu';
+
+export type { BeatThisModel } from './beatThisGpu';
 import { modelCanRun, noteModelFailed } from './modelAvailability';
 import { fft } from '../automix/signalAnalysis';
 import { YIELD_BUDGET_MS, yieldToUi } from '../automix/uiYield';
@@ -421,10 +423,13 @@ export const gridFromBeats = (
  * should say so rather than appear broken), and the model's weights have to be on disk, which
  * `modelCanRun` answers.
  */
-export const canRunBeatThis = (): boolean =>
-    typeof window !== 'undefined'
-    && typeof window.electron?.runBeatThis === 'function'
-    && modelCanRun('beat_this');
+export const canRunBeatThis = (model: BeatThisModel = 'beat_this'): boolean => {
+    if (typeof window === 'undefined') return false;
+    // small0 ships inside the app and runs on the GPU only: the desktop bridge that hands its weights
+    // over is the whole question. A broken install that lost the file answers null at the first run.
+    if (model === 'beat_this_small') return typeof window.electron?.getBeatThisGpuWeights === 'function';
+    return typeof window.electron?.runBeatThis === 'function' && modelCanRun('beat_this');
+};
 
 /**
  * The whole Beat This! pass: spectrogram in, beat grid out.
@@ -449,10 +454,12 @@ export const canRunBeatThis = (): boolean =>
  */
 export const analyseBeatGrid = async (
     mel: MelSpectrogram,
-    { cpuFallback = false }: { cpuFallback?: boolean } = {},
+    { cpuFallback = false, model = 'beat_this' }: { cpuFallback?: boolean; model?: BeatThisModel } = {},
 ): Promise<BeatGrid | null> => {
-    const run = typeof window !== 'undefined' ? window.electron?.runBeatThis : undefined;
-    if (!canRunBeatThis() || typeof run !== 'function') return null;
+    if (!canRunBeatThis(model)) return null;
+    // The CPU worker only has final0; small0 is GPU or nothing, whatever the caller allows.
+    const run = model === 'beat_this' && cpuFallback && typeof window !== 'undefined' ? window.electron?.runBeatThis : undefined;
+    if (model === 'beat_this' && cpuFallback && typeof run !== 'function') return null;
 
     const chunks = splitForModel(mel);
     if (!chunks.length) return null;
@@ -460,12 +467,13 @@ export const analyseBeatGrid = async (
     // The renderer's own GPU first (beatThisGpu.ts); it answers null for whatever it cannot take - no
     // export on disk, no usable device, a failed run - and those go to the CPU, if this caller allows it.
     const request = chunks.map(({ data, frames }) => ({ data, frames }));
-    const logits = await runBeatThisGpu(request) ?? (cpuFallback ? await run(request) : null);
+    const logits = await runBeatThisGpu(request, model) ?? (run ? await run(request) : null);
     if (!logits || logits.beat.length !== chunks.length) {
         // Nothing usable came back. Not remembered as a failure - the same empty answer arrives when
         // the weights were just deleted or the worker was restarted under this request - so this only
-        // re-checks disk, and the caller falls back to its own estimator.
-        await noteModelFailed('beat_this');
+        // re-checks disk, and the caller falls back to its own estimator. (small0 is not a download:
+        // there is no disk state of it for the settings page to re-check.)
+        if (model === 'beat_this') await noteModelFailed('beat_this');
         return null;
     }
 

@@ -2,7 +2,6 @@ import type { SongResult } from '../../types';
 import { mergeBeatFxEvents, type BeatFxEvent } from './clock';
 import { getTrackBeatGrid } from '../analysis/beatGrid';
 import { BEAT_THIS_SAMPLE_RATE, canRunBeatThis } from '../analysis/beatThis';
-import { refreshModelAvailability } from '../analysis/modelAvailability';
 import { decodeAtRate, readLocalTrackBytes, toMidSide } from '../analysis/trackAudio';
 import { getPlaybackAnalysisTarget } from '../playbackRecovery/representationRegistry';
 import type { PlaybackRepresentation } from '../../types/playbackRecovery';
@@ -10,13 +9,16 @@ import type { PlaybackRepresentation } from '../../types/playbackRecovery';
 // src/services/beatFx/beatFxSource.ts
 // Where the beat FX get the playing track's beat list from.
 //
-// analysis/beatGrid.ts answers it: the list stored for this track - by an earlier play, or by
-// automix's profile, which runs the same model - or the run of it already in flight, or a run now on
-// the track's own bytes. The bytes are only what is already on this machine (analysis/trackAudio.ts):
+// analysis/beatGrid.ts answers it: the list stored for this track by an earlier play, or the run of
+// it already in flight, or a run now on the track's own bytes. The model is Beat This!'s small0
+// (2.1M parameters, 4.7MB, packaged with the app), not automix's downloaded final0: the beat FX work
+// on a fresh install, never wait on a download, and never read or share automix's lists.
+//
+// The bytes are only what is already on this machine (analysis/trackAudio.ts):
 // the playback representation, the media cache, the local file. Never a download, so an online track
 // gets its beats once it is cached, and a local one on its first play.
 //
-// The run is on the renderer's GPU only. `cpuFallback` stays off, so a machine whose GPU cannot take
+// The run is on the renderer's GPU only - small0 has no CPU path - so a machine whose GPU cannot take
 // it gets no beats - and the visualizer its original picture - rather than a CPU inference competing
 // with playback for the length of a track.
 
@@ -40,7 +42,6 @@ const resolveTrackBeats = async (
     let note = 'beat_this returned no beats (no usable GPU, or a failed run)';
     let grid: Awaited<ReturnType<typeof getTrackBeatGrid>>;
     try {
-        await refreshModelAvailability();
         grid = await getTrackBeatGrid(key, async () => {
         // Asked before the read and the decode, which are seconds of work for nobody without one.
         if (typeof navigator === 'undefined' || !('gpu' in navigator)) {
@@ -58,14 +59,14 @@ const resolveTrackBeats = async (
             return null;
         }
         return toMidSide(buffer).mid;
-        });
+        }, { model: 'beat_this_small' });
     } catch (error) {
         // A throw here (a cache read, a worker, a GPU device lost mid-run) is "no beats" like any
         // other: answered, so the caller's frame falls back, and not remembered, so a later play retries.
         return { events: [], source: 'none', note: `beat lookup failed: ${String(error)}` };
     }
     if (grid?.beats.length) return { events: mergeBeatFxEvents(grid.beats, grid.downbeats), source: 'beat_this' };
-    return { events: [], source: 'none', note: canRunBeatThis() ? note : 'beat_this model not downloaded' };
+    return { events: [], source: 'none', note: canRunBeatThis('beat_this_small') ? note : 'not the desktop app' };
 };
 
 /**

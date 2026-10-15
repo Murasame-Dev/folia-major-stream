@@ -2281,7 +2281,6 @@ export default {
     "sonnetSmartBeatSection": "Smart beat mode",
     "sonnetSmartBeatEnabled": "Smart beat mode",
     "sonnetSmartBeatDesc": "Drives the picture from the beats beat_this detects: every beat punches the camera, each bar's first beat tears and flares, icons pop on lyric onsets. Off keeps the original spectrum response. A local track is analysed for a few seconds on its first play; an online track once it is cached (played through once). Analysed tracks are remembered.",
-    "beatFxUnavailable_noModel": "Download the beat_this model under Analysis models first; until then the original picture is kept.",
     "beatFxUnavailable_noGpu": "No usable WebGPU on this device, so beat effects have no effect.",
     "beatFxUnavailable_desktopOnly": "Beat effects are only available in the desktop app.",
     "sonnetBeatIntensity": "Beat strength",

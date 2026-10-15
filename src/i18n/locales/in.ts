@@ -2273,7 +2273,6 @@ export default {
     "sonnetSmartBeatSection": "Mode ketukan pintar",
     "sonnetSmartBeatEnabled": "Mode ketukan pintar",
     "sonnetSmartBeatDesc": "Menggerakkan gambar dari ketukan yang dideteksi beat_this: setiap ketukan mendorong kamera, ketukan pertama tiap birama memberi efek sobek dan kilau, ikon muncul mengikuti awal lirik. Nonaktif mempertahankan respons spektrum asli. Lagu lokal dianalisis beberapa detik saat pertama diputar; lagu online setelah tersimpan di cache (diputar sampai selesai sekali). Lagu yang sudah dianalisis akan diingat.",
-    "beatFxUnavailable_noModel": "Unduh model beat_this di Model analisis terlebih dahulu; sampai saat itu gambar asli dipertahankan.",
     "beatFxUnavailable_noGpu": "Tidak ada WebGPU yang dapat digunakan di perangkat ini, jadi efek ketukan tidak berfungsi.",
     "beatFxUnavailable_desktopOnly": "Efek ketukan hanya tersedia di aplikasi desktop.",
     "sonnetBeatIntensity": "Kekuatan ketukan",

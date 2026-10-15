@@ -1,6 +1,8 @@
 # Automix — 两个模型的改动
 
 本目录用到两个神经网络：拍点检测 `beat_this-wgsl.bin` 与人声分离 `htdemucs-v3.mnn`。
+
+（商籁的智能动感模式用的是另一个更小的拍点模型 small0，`beat_this-small-wgsl.bin`，随应用打包、只走 GPU，与 automix 互不共用结果；见 `../analysis/README.md`。）
 两者都不进安装包，由设置页按需下载（清单见 `shared/modelManifest.json`，下载与校验在
 `electron/analysis/`）。运行它们的 MNN 编进 app（`native/folia-mnn`，`build/buildMnnRuntime.mjs`），
 不再有运行时下载。

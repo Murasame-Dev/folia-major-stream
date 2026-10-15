@@ -1,30 +1,29 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
-import { modelsPresent, refreshModelAvailability, subscribeModelAvailability } from '../services/analysis/modelAvailability';
+import { useEffect, useState } from 'react';
 import { probeBeatThisGpu } from '../services/analysis/beatThisGpu';
 
 // src/hooks/useSmartBeatAvailability.ts
 // Whether beat FX (Sonnet's 智能动感模式, and any mode that adds them) can do anything on this
 // install, for a setting to say so next to its switch. The switch itself stays usable either way - it
-// is a preference, and it starts working the moment the reason goes away (a download lands) - but a
-// switch that is on and silently inert is the failure this is here to prevent.
+// is a preference - but a switch that is on and silently inert is the failure this is here to prevent.
+//
+// The model (small0) ships with the desktop app, so there is no "not downloaded" state: what can be
+// missing is the desktop bridge (the web build) or a GPU that hands out an adapter.
 
-export type SmartBeatAvailability = 'ready' | 'desktopOnly' | 'noGpu' | 'noModel';
+export type SmartBeatAvailability = 'ready' | 'desktopOnly' | 'noGpu';
 
-const hasBeatThisBridge = () => typeof window !== 'undefined' && typeof window.electron?.runBeatThis === 'function';
+const hasBeatThisBridge = () => typeof window !== 'undefined' && typeof window.electron?.getBeatThisGpuWeights === 'function';
 
 /**
- * Asked only while `enabled` - the switch is on. Off, nothing is probed (no adapter request, no model
- * check) and the answer is 'ready', which a caller shows nothing for.
+ * Asked only while `enabled` - the switch is on. Off, nothing is probed (no adapter request) and the
+ * answer is 'ready', which a caller shows nothing for.
  */
 export function useSmartBeatAvailability(enabled: boolean): SmartBeatAvailability {
-    const present = useSyncExternalStore(subscribeModelAvailability, modelsPresent, modelsPresent);
     // Optimistic until the probe answers: a hint flashing "no GPU" on every open would be worse.
     const [gpu, setGpu] = useState(true);
 
     useEffect(() => {
         if (!enabled) return;
         let cancelled = false;
-        void refreshModelAvailability();
         void probeBeatThisGpu().then((found) => {
             if (!cancelled) setGpu(found);
         });
@@ -35,6 +34,5 @@ export function useSmartBeatAvailability(enabled: boolean): SmartBeatAvailabilit
 
     if (!enabled) return 'ready';
     if (!hasBeatThisBridge()) return 'desktopOnly';
-    if (!gpu) return 'noGpu';
-    return present.beat_this ? 'ready' : 'noModel';
+    return gpu ? 'ready' : 'noGpu';
 }

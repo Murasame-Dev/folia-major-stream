@@ -2282,7 +2282,6 @@ export default {
     "sonnetSmartBeatSection": "智能动感模式",
     "sonnetSmartBeatEnabled": "智能动感模式",
     "sonnetSmartBeatDesc": "开启后按 beat_this 识别的节拍驱动画面：每拍镜头推近，小节第一拍撕裂与辉光，图标跟随歌词起音。关闭时保持原来的频谱响应。本地歌曲第一次播放时分析几秒；在线歌曲要等缓存下来（完整播放过一次）才能分析。分析过的歌会被记住。",
-    "beatFxUnavailable_noModel": "需要先在设置的「分析模型」中下载节拍模型 beat_this，下载前保持原来的画面。",
     "beatFxUnavailable_noGpu": "此设备没有可用的 WebGPU，节拍效果不会生效。",
     "beatFxUnavailable_desktopOnly": "节拍效果仅在桌面版可用。",
     "sonnetBeatIntensity": "轻拍强度",

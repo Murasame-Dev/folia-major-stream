@@ -36,6 +36,12 @@ const IDLE_MS = 120_000;
  */
 const CHUNK_FRAMES = 1500;
 
+/**
+ * Which export a run is for: final0, automix's download (and the CPU fallback's), or small0, bundled
+ * with the app for the beat FX. Same kernels, different widths; the worker holds one at a time.
+ */
+export type BeatThisModel = 'beat_this' | 'beat_this_small';
+
 interface Reply {
     id: number;
     result?: unknown;
@@ -47,6 +53,8 @@ interface Logits { beat: Float32Array[]; downbeat: Float32Array[] }
 let worker: Worker | null = null;
 /** Resolves once the worker has its model; null when there is none and this must be asked again. */
 let ready: Promise<boolean> | null = null;
+/** The model `ready` is loading or has loaded. */
+let loaded: BeatThisModel | null = null;
 /** Set when this machine cannot run the WebGPU path at all; for the rest of the session. */
 let unsupported = false;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -63,6 +71,7 @@ const drop = () => {
     const dying = worker;
     worker = null;
     ready = null;
+    loaded = null;
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = null;
     for (const settle of pending.values()) settle({ id: -1, error: 'worker dropped' });
@@ -89,11 +98,11 @@ const ask = (message: Record<string, unknown>, transfer: Transferable[] = []): P
     });
 };
 
-const start = async (): Promise<boolean> => {
+const start = async (model: BeatThisModel): Promise<boolean> => {
     const fetchWeights = window.electron?.getBeatThisGpuWeights;
     if (typeof fetchWeights !== 'function') return false;
-    // Not there is the ordinary state until the export is downloaded; asked again on the next track.
-    const found = await fetchWeights();
+    // Not there is the ordinary state until final0 is downloaded; asked again on the next track.
+    const found = await fetchWeights(model);
     if (!found) return false;
 
     try {
@@ -151,19 +160,27 @@ export const probeBeatThisGpu = (): Promise<boolean> => {
  * Null without trying when there is no WebGPU export on disk, and when this machine has already
  * failed to run it.
  */
-export const runBeatThisGpu = (chunks: Array<{ data: Float32Array; frames: number }>): Promise<Logits | null> => {
+export const runBeatThisGpu = (
+    chunks: Array<{ data: Float32Array; frames: number }>,
+    model: BeatThisModel = 'beat_this',
+): Promise<Logits | null> => {
     if (unsupported || typeof window === 'undefined' || typeof Worker === 'undefined') return Promise.resolve(null);
     if (!chunks.length || chunks.some(chunk => chunk.frames < 1 || chunk.frames > CHUNK_FRAMES)) return Promise.resolve(null);
-    const run = queue.then(() => runNow(chunks));
+    const run = queue.then(() => runNow(chunks, model));
     queue = run.catch(() => null);
     return run;
 };
 
-const runNow = async (chunks: Array<{ data: Float32Array; frames: number }>): Promise<Logits | null> => {
+const runNow = async (chunks: Array<{ data: Float32Array; frames: number }>, model: BeatThisModel): Promise<Logits | null> => {
     if (unsupported) return null;
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = null;
-    ready ??= start();
+    // One model on the device at a time. The two callers rarely alternate - automix analyses minutes
+    // ahead, the beat FX once per new track - and a switch is a reload of a few MB, while holding both
+    // would keep final0's activations and weights resident beside the visualizer for nothing.
+    if (loaded !== model) drop();
+    loaded = model;
+    ready ??= start(model);
     // A start that threw is a start that failed: not kept, or every later run would rethrow it.
     if (!(await ready.catch(() => false))) {
         ready = null;

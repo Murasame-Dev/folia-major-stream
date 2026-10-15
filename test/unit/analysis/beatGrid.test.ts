@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // test/unit/analysis/beatGrid.test.ts
-// A whole track's beats, shared by automix and the beat FX: stored, joined while in flight, run once.
+// A whole track's beats per model - final0 for automix, small0 for the beat FX: stored, joined while in
+// flight, run once, and never crossed between the two.
 
 const store = new Map<string, unknown>();
 vi.mock('@/services/db', () => ({
@@ -80,7 +81,10 @@ describe('getTrackBeatGrid', () => {
         ]);
         expect(gpuOnly).toBeNull();
         expect(withCpu).toEqual(GRID);
-        expect(analyseBeatGrid.mock.calls.map(call => call[1])).toEqual([{ cpuFallback: false }, { cpuFallback: true }]);
+        expect(analyseBeatGrid.mock.calls.map(call => call[1])).toEqual([
+            { cpuFallback: false, model: 'beat_this' },
+            { cpuFallback: true, model: 'beat_this' },
+        ]);
     });
 
     it('never starts a run without the model, but still reads a stored list', async () => {
@@ -89,5 +93,22 @@ describe('getTrackBeatGrid', () => {
         await storeBeatGrid('song-1', GRID);
         expect(await getTrackBeatGrid('song-1', mid)).toEqual(GRID);
         expect(analyseBeatGrid).not.toHaveBeenCalled();
+    });
+
+    it('keeps the two models apart: neither reads, joins or stores as the other', async () => {
+        await storeBeatGrid('song-1', GRID);
+        const SMALL = { beats: [0.6, 1.1], downbeats: [0.6] };
+        analyseBeatGrid.mockResolvedValue(SMALL);
+        expect(await getTrackBeatGrid('song-1', mid, { model: 'beat_this_small' })).toEqual(SMALL);
+        expect(analyseBeatGrid).toHaveBeenCalledTimes(1);
+        expect(await readStoredBeatGrid('song-1')).toEqual(GRID);
+        expect(await readStoredBeatGrid('song-1', 'beat_this_small')).toEqual(SMALL);
+        expect([...store.keys()].sort()).toEqual(['beat_this_grid_song-1', 'beat_this_small_grid_song-1']);
+    });
+
+    it('runs small0 on the GPU only, whatever the caller allows', async () => {
+        analyseBeatGrid.mockResolvedValue(GRID);
+        await getTrackBeatGrid('song-2', mid, { model: 'beat_this_small', cpuFallback: true });
+        expect(analyseBeatGrid.mock.calls[0][1]).toEqual({ cpuFallback: false, model: 'beat_this_small' });
     });
 });

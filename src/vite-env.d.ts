@@ -770,8 +770,11 @@ declare global {
       runBeatThis?: (
         chunks: Array<{ data: Float32Array; frames: number }>,
       ) => Promise<{ beat: Float32Array[]; downbeat: Float32Array[] } | null>;
-      /** The WebGPU export of Beat This! (fp16 tensors + manifest, one file), read by the main process. Null when absent. */
-      getBeatThisGpuWeights?: () => Promise<{
+      /**
+       * The WebGPU export of Beat This! (fp16 tensors + manifest, one file), read by the main process.
+       * final0 (automix's download) by default, the bundled small0 with 'beat_this_small'. Null when absent.
+       */
+      getBeatThisGpuWeights?: (model?: 'beat_this' | 'beat_this_small') => Promise<{
         weights: Uint8Array<ArrayBuffer>;
         manifest: import('./services/analysis/beatThisWgsl/runtime').BeatThisWgslManifest;
       } | null>;

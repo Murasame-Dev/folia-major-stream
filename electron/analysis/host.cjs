@@ -173,8 +173,11 @@ const createAnalysisHost = ({ app, ipcMain, getModelsDirs, idleMs = IDLE_MS }) =
      * that side drops again after two idle minutes. The same file is the worker's CPU fallback; its
      * tensors and manifest are one file (packedWeights.cjs), split here.
      */
-    ipcMain.handle('automix-beat-this-gpu-weights', async () => {
-        const file = resolveModelFile(modelsDirs(), 'beat_this');
+    ipcMain.handle('automix-beat-this-gpu-weights', async (_event, model) => {
+        // final0 (automix's download) unless the bundled small0 is asked for by name; nothing else is
+        // a WebGPU export, so no other name may pick a file.
+        const name = model === 'beat_this_small' ? 'beat_this_small' : 'beat_this';
+        const file = resolveModelFile(modelsDirs(), name);
         if (!file) return null;
         try {
             // A truncated download fails the trailer or the length check in unpackWeights, rather than
