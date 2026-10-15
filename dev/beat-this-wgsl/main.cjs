@@ -11,6 +11,9 @@ const path = require('path');
 //   npx rolldown dev/beat-this-wgsl/harness.ts -o $OUT/harness.js -f iife -p browser
 //   BTW_DIR=$OUT BTW_WEIGHTS=... BTW_CHUNKS=chunks.f32 [BTW_STAGES=1] [BTW_REPEAT=5] [BTW_PROFILE=1] npx electron dev/beat-this-wgsl/main.cjs
 //
+// BTW_F16=storage|math runs the shader-f16 kernels (needs the --f16 export and an adapter with
+// shader-f16); see kernels.ts for the two levels.
+//
 // BTW_PROFILE=1 times every dispatch with timestamp-query and writes profile.json (median per
 // dispatch over the repeats) plus a summary by kernel and by network stage.
 //
@@ -38,6 +41,10 @@ if (!dir) {
 app.commandLine.appendSwitch('enable-webgpu-developer-features');
 app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'btw-userdata-')));
 
+if (process.env.BTW_F16 && !['storage', 'math'].includes(process.env.BTW_F16)) {
+    console.error(`BTW_F16 must be storage or math, got ${process.env.BTW_F16}`);
+    process.exit(2);
+}
 ipcMain.handle('btw-config', () => ({
     weights: process.env.BTW_WEIGHTS,
     chunks: process.env.BTW_CHUNKS,
@@ -46,6 +53,7 @@ ipcMain.handle('btw-config', () => ({
     repeat: Number(process.env.BTW_REPEAT || 5),
     songs: (process.env.BTW_SONGS || '').split(',').filter(Boolean),
     profile: process.env.BTW_PROFILE === '1',
+    f16: process.env.BTW_F16 || undefined,
 }));
 ipcMain.on('btw-log', (_event, line) => console.log(line));
 ipcMain.on('btw-done', (_event, code) => app.exit(code));

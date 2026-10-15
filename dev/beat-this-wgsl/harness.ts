@@ -27,14 +27,17 @@ async function main() {
     const info = adapter.info;
     log(`adapter: ${info.vendor} ${info.architecture} ${info.description} f16=${adapter.features.has('shader-f16')}`);
     const device = await adapter.requestDevice({
-        requiredFeatures: config.profile && adapter.features.has('timestamp-query') ? ['timestamp-query'] : [],
+        requiredFeatures: [
+            ...(config.profile && adapter.features.has('timestamp-query') ? ['timestamp-query' as const] : []),
+            ...(config.f16 ? ['shader-f16' as const] : []),
+        ],
     });
     device.addEventListener('uncapturederror', (event) => log(`GPU error: ${(event as GPUUncapturedErrorEvent).error.message}`));
 
     const manifest: BeatThisWgslManifest = JSON.parse(fs.readFileSync(config.weights.replace(/\.bin$/, '.json'), 'utf8'));
     const weights: Uint8Array = fs.readFileSync(config.weights);
     if (config.songs.length) {
-        await runSongs(device, weights, manifest, config.songs, config.out);
+        await runSongs(device, weights, manifest, config.songs, config.out, config.f16);
         ipcRenderer.send('btw-done', 0);
         return;
     }
@@ -44,7 +47,7 @@ async function main() {
     const count = chunks.length / perChunk;
 
     let started = performance.now();
-    const model = await BeatThisWgsl.create(device, weights, manifest);
+    const model = await BeatThisWgsl.create(device, weights, manifest, { f16: config.f16 });
     log(`create: ${(performance.now() - started).toFixed(0)} ms`);
 
     const T = BEAT_THIS_WGSL_FRAMES;
@@ -121,8 +124,8 @@ async function decodeMono(file: string): Promise<Float32Array> {
     return left.map((value, index) => (value + right[index]) / 2);
 }
 
-async function runSongs(device: GPUDevice, weights: Uint8Array, manifest: BeatThisWgslManifest, songs: string[], out: string) {
-    const model = await BeatThisWgsl.create(device, weights, manifest);
+async function runSongs(device: GPUDevice, weights: Uint8Array, manifest: BeatThisWgslManifest, songs: string[], out: string, f16?: 'storage' | 'math') {
+    const model = await BeatThisWgsl.create(device, weights, manifest, { f16 });
     const T = BEAT_THIS_WGSL_FRAMES;
     for (const song of songs) {
         const name = path.basename(song).replace(/\.[^.]+$/, '');

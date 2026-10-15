@@ -136,8 +136,20 @@ export const MATMUL_ROPE = 8;
  * W rows are padded to `wStride` (a multiple of 4) columns at export, so each column quad of B is
  * one aligned load: a vec4f from the f32 export (MATMUL), two packed u32 from the --f16 export
  * (MATMUL_F16W, unpacked to f32; the arithmetic is the same).
+ *
+ * The shader-f16 variants (--f16 export) keep both tiles in workgroup memory as f16, which halves
+ * the tile traffic. MATMUL_F16 converts them back and does the FMAs in f32 (M4 Pro: 53.3 -> 49.1 ms
+ * per chunk with the attention unchanged, logits ~80 dB against f32). MATMUL_F16_MATH multiplies in
+ * f16 too, summing each 16-deep K step in f16 and that partial into the f32 accumulator (47.1 ms,
+ * ~75 dB) - only worth it where f16 math has twice the f32 rate, which Apple GPUs do not. X stays
+ * f32 in memory and its sum of squares is taken in f32 before rounding. With NORM the A elements
+ * are the raw residual stream (|x| up to ~200 times |w| up to ~9), so they are scaled by 1/64
+ * (exact) on the way to f16 and the row scale takes the 64 back.
  */
-const matmulSource = (weights: string) => /* wgsl */ `
+const matmulSource = (weights: string, mode: 'f32' | 'storage' | 'math' = 'f32') => {
+  const f16 = mode !== 'f32';
+  return /* wgsl */ `
+${f16 ? 'enable f16;' : ''}
 ${GELU}
 struct P { m: u32, n: u32, k: u32, flags: u32, posDiv: u32, posMod: u32, dmodel: u32, wStride: u32 }
 @group(0) @binding(0) var<storage, read> x: array<f32>;
@@ -146,8 +158,11 @@ ${weights}
 @group(0) @binding(3) var<storage, read_write> y: array<f32>;
 @group(0) @binding(4) var<storage, read> table: array<f32>; // [pos][16][cos, sin]
 @group(0) @binding(5) var<uniform> p: P;
-var<workgroup> as_: array<vec4f, 256>; // [16 k][16 row quads]; afterwards the per-loader row sums of squares
-var<workgroup> bs_: array<vec4f, 256>; // [16 k][16 col quads]
+${f16 ? `var<workgroup> as_: array<vec4h, 256>; // [16 k][16 row quads]
+var<workgroup> bs_: array<vec4h, 256>; // [16 k][16 col quads]
+var<workgroup> sums_: array<vec4f, 256>; // per-loader row sums of squares
+const A_SCALE = 64.0;` : `var<workgroup> as_: array<vec4f, 256>; // [16 k][16 row quads]; afterwards the per-loader row sums of squares
+var<workgroup> bs_: array<vec4f, 256>; // [16 k][16 col quads]`}
 @compute @workgroup_size(16, 16)
 fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u, @builtin(local_invocation_index) li: u32) {
   let row0 = wg.y * 64u;
@@ -169,31 +184,45 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u
       }
     }
     squares = fma(av, av, squares);
-    as_[aK * 16u + aQuad] = av;
-    var bv = vec4f(0.0);
+    as_[aK * 16u + aQuad] = ${f16 ? 'vec4h(select(av, av / A_SCALE, (p.flags & 4u) != 0u))' : 'av'};
+    var bv = ${f16 ? 'vec4h' : 'vec4f'}(0.0);
     let bk = k0 + bK;
     let bc = col0 + bQuad * 4u;
     if (bk < p.k && bc < p.n) { bv = weightQuad((bk * p.wStride + bc) / 4u); }
     bs_[bK * 16u + bQuad] = bv;
     workgroupBarrier();
-    for (var kk = 0u; kk < 16u; kk++) {
+${f16 ? `${mode === 'math' ? '    var part: array<vec4h, 4>;\n' : ''}    for (var kk = 0u; kk < 16u; kk++) {
+      let a = as_[kk * 16u + l.y];
+      let b = bs_[kk * 16u + l.x];
+${mode === 'math' ? `      part[0] = fma(a, vec4h(b.x), part[0]);
+      part[1] = fma(a, vec4h(b.y), part[1]);
+      part[2] = fma(a, vec4h(b.z), part[2]);
+      part[3] = fma(a, vec4h(b.w), part[3]);
+    }
+    for (var j = 0u; j < 4u; j++) { acc[j] += vec4f(part[j]); }` : `      let af = vec4f(a);
+      let bf = vec4f(b);
+      acc[0] = fma(af, vec4f(bf.x), acc[0]);
+      acc[1] = fma(af, vec4f(bf.y), acc[1]);
+      acc[2] = fma(af, vec4f(bf.z), acc[2]);
+      acc[3] = fma(af, vec4f(bf.w), acc[3]);
+    }`}` : `    for (var kk = 0u; kk < 16u; kk++) {
       let a = as_[kk * 16u + l.y];
       let b = bs_[kk * 16u + l.x];
       acc[0] = fma(a, vec4f(b.x), acc[0]);
       acc[1] = fma(a, vec4f(b.y), acc[1]);
       acc[2] = fma(a, vec4f(b.z), acc[2]);
       acc[3] = fma(a, vec4f(b.w), acc[3]);
-    }
+    }`}
     workgroupBarrier();
   }
-  // The 16 loaders of row quad q are invocations 16q..16q+15; their partial sums meet in as_.
-  as_[li] = squares;
+  // The 16 loaders of row quad q are invocations 16q..16q+15; their partial sums meet in ${f16 ? 'sums_' : 'as_'}.
+  ${f16 ? 'sums_' : 'as_'}[li] = squares;
   workgroupBarrier();
   var rowScale = vec4f(1.0);
   if ((p.flags & 4u) != 0u) {
     var total = vec4f(0.0);
-    for (var t = 0u; t < 16u; t++) { total += as_[l.y * 16u + t]; }
-    rowScale = 1.0 / max(sqrt(total), vec4f(1e-12));
+    for (var t = 0u; t < 16u; t++) { total += ${f16 ? 'sums_' : 'as_'}[l.y * 16u + t]; }
+    rowScale = ${f16 ? 'A_SCALE' : '1.0'} / max(sqrt(total), vec4f(1e-12));
   }
   for (var i = 0u; i < 4u; i++) {
     let r = row0 + l.y * 4u + i;
@@ -228,6 +257,7 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u
   }
 }
 `;
+};
 
 export const MATMUL = matmulSource(/* wgsl */ `
 @group(0) @binding(1) var<storage, read> w: array<vec4f>;
@@ -237,6 +267,12 @@ export const MATMUL_F16W = matmulSource(/* wgsl */ `
 @group(0) @binding(1) var<storage, read> w: array<vec2u>; // four fp16 columns per element
 fn weightQuad(i: u32) -> vec4f { let q = w[i]; return vec4f(unpack2x16float(q.x), unpack2x16float(q.y)); }`);
 
+const F16_WEIGHTS = /* wgsl */ `
+@group(0) @binding(1) var<storage, read> w: array<vec4h>;
+fn weightQuad(i: u32) -> vec4h { return w[i]; }`;
+export const MATMUL_F16 = matmulSource(F16_WEIGHTS, 'storage');
+export const MATMUL_F16_MATH = matmulSource(F16_WEIGHTS, 'math');
+
 /**
  * Gated multi-head attention, head dim 32, FlashAttention-style: keys and values stream through
  * workgroup memory in tiles of 32, and each tile is handled as a block - all 32 scores first, one
@@ -244,15 +280,23 @@ fn weightQuad(i: u32) -> vec4f { let q = w[i]; return vec4f(unpack2x16float(q.x)
  * 1500x1500 score matrix is never stored and the exp/rescale cost is per tile, not per key.
  * One invocation per query, 64 queries of one (batch, head) per workgroup, vec4 throughout the
  * inner loops. Query row = batch * batchStride + index * seqStride.
+ *
+ * ATTENTION_F16 keeps the K and V tiles in workgroup memory as f16; scores, softmax and the P.V
+ * sums stay f32, since one head of the last layer magnifies score errors ~25 dB on frames next to a
+ * beat (M4 Pro: 23.1 -> 18.7 ms, logits ~79 dB against f32 with MATMUL_F16). ATTENTION_F16_MATH
+ * also does P.V in f16, each tile's 32 terms summed in f16 then added to the f32 accumulator
+ * (18.0 ms, ~77 dB). K in f16 with V in f32 is slower than all-f32: the conversions cost more than
+ * the halved tile saves.
  */
-export const ATTENTION = /* wgsl */ `
+const attentionSource = (f16: { k: boolean; pv: boolean } | null) => /* wgsl */ `
+${f16 ? 'enable f16;' : ''}
 struct P { n: u32, heads: u32, width: u32, dmodel: u32, seqStride: u32, batchStride: u32 }
 @group(0) @binding(0) var<storage, read> qkv: array<f32>;
 @group(0) @binding(1) var<storage, read_write> o: array<f32>; // [rows, dmodel]
 @group(0) @binding(2) var<uniform> p: P;
 const TILE = 32u;
-var<workgroup> ks: array<vec4f, 256>; // [TILE keys][8 x vec4]
-var<workgroup> vs: array<vec4f, 256>;
+var<workgroup> ks: array<${f16?.k ? 'vec4h' : 'vec4f'}, 256>; // [TILE keys][8 x vec4]
+var<workgroup> vs: array<${f16 ? 'vec4h' : 'vec4f'}, 256>;
 @compute @workgroup_size(64)
 fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u) {
   let b = wg.z;
@@ -283,8 +327,8 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u
         kv = vec4f(qkv[kb], qkv[kb + 1u], qkv[kb + 2u], qkv[kb + 3u]);
         vv = vec4f(qkv[vb], qkv[vb + 1u], qkv[vb + 2u], qkv[vb + 3u]);
       }
-      ks[idx] = kv;
-      vs[idx] = vv;
+      ks[idx] = ${f16?.k ? 'vec4h(kv)' : 'kv'};
+      vs[idx] = ${f16 ? 'vec4h(vv)' : 'vv'};
     }
     workgroupBarrier();
     // Constant trip counts so the compiler unrolls and keeps s[] in registers; keys past the end
@@ -293,7 +337,7 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u
     var tileMax = -3.0e38;
     for (var j = 0u; j < TILE; j++) {
       var dotv = vec4f(0.0);
-      for (var d = 0u; d < 8u; d++) { dotv = fma(q[d], ks[j * 8u + d], dotv); }
+      for (var d = 0u; d < 8u; d++) { dotv = fma(q[d], ${f16?.k ? 'vec4f(ks[j * 8u + d])' : 'ks[j * 8u + d]'}, dotv); }
       s[j] = select(-3.0e38, dotv.x + dotv.y + dotv.z + dotv.w, k0 + j < p.n);
       tileMax = max(tileMax, s[j]);
     }
@@ -302,11 +346,18 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u
     sum *= r;
     for (var d = 0u; d < 8u; d++) { acc[d] *= r; }
     m = mNew;
+${f16?.pv ? `    var part: array<vec4h, 8>;
     for (var j = 0u; j < TILE; j++) {
       let e = exp(s[j] - m);
       sum += e;
-      for (var d = 0u; d < 8u; d++) { acc[d] = fma(vec4f(e), vs[j * 8u + d], acc[d]); }
+      let eh = vec4h(f16(e));
+      for (var d = 0u; d < 8u; d++) { part[d] = fma(eh, vs[j * 8u + d], part[d]); }
     }
+    for (var d = 0u; d < 8u; d++) { acc[d] += vec4f(part[d]); }` : `    for (var j = 0u; j < TILE; j++) {
+      let e = exp(s[j] - m);
+      sum += e;
+      for (var d = 0u; d < 8u; d++) { acc[d] = fma(vec4f(e), ${f16 ? 'vec4f(vs[j * 8u + d])' : 'vs[j * 8u + d]'}, acc[d]); }
+    }`}
     workgroupBarrier();
   }
   if (!valid) { return; }
@@ -322,6 +373,10 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u
   }
 }
 `;
+
+export const ATTENTION = attentionSource(null);
+export const ATTENTION_F16 = attentionSource({ k: true, pv: false });
+export const ATTENTION_F16_MATH = attentionSource({ k: true, pv: true });
 
 /** [F, T, C] -> [T, F * C]: the frontend's final flatten, in the (f c) order the exported linear expects. */
 export const FLATTEN = /* wgsl */ `
