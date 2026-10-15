@@ -133,12 +133,15 @@ export const MATMUL_ROPE = 8;
  * 64x64 output tile per workgroup, 4x4 per invocation, K in steps of 16 through workgroup memory.
  * The A tile is stored transposed so an invocation's four rows are one vec4 read, and its four
  * columns of B another: two workgroup-memory reads per 16 FMAs.
+ * W rows are padded to `wStride` (a multiple of 4) columns at export, so each column quad of B is
+ * one aligned load: a vec4f from the f32 export (MATMUL), two packed u32 from the --f16 export
+ * (MATMUL_F16W, unpacked to f32; the arithmetic is the same).
  */
-export const MATMUL = /* wgsl */ `
+const matmulSource = (weights: string) => /* wgsl */ `
 ${GELU}
-struct P { m: u32, n: u32, k: u32, flags: u32, posDiv: u32, posMod: u32, dmodel: u32, pad: u32 }
+struct P { m: u32, n: u32, k: u32, flags: u32, posDiv: u32, posMod: u32, dmodel: u32, wStride: u32 }
 @group(0) @binding(0) var<storage, read> x: array<f32>;
-@group(0) @binding(1) var<storage, read> w: array<f32>;
+${weights}
 @group(0) @binding(2) var<storage, read> bias: array<f32>;
 @group(0) @binding(3) var<storage, read_write> y: array<f32>;
 @group(0) @binding(4) var<storage, read> table: array<f32>; // [pos][16][cos, sin]
@@ -169,12 +172,8 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u
     as_[aK * 16u + aQuad] = av;
     var bv = vec4f(0.0);
     let bk = k0 + bK;
-    if (bk < p.k) {
-      for (var c = 0u; c < 4u; c++) {
-        let col = col0 + bQuad * 4u + c;
-        if (col < p.n) { bv[c] = w[bk * p.n + col]; }
-      }
-    }
+    let bc = col0 + bQuad * 4u;
+    if (bk < p.k && bc < p.n) { bv = weightQuad((bk * p.wStride + bc) / 4u); }
     bs_[bK * 16u + bQuad] = bv;
     workgroupBarrier();
     for (var kk = 0u; kk < 16u; kk++) {
@@ -229,6 +228,14 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u
   }
 }
 `;
+
+export const MATMUL = matmulSource(/* wgsl */ `
+@group(0) @binding(1) var<storage, read> w: array<vec4f>;
+fn weightQuad(i: u32) -> vec4f { return w[i]; }`);
+
+export const MATMUL_F16W = matmulSource(/* wgsl */ `
+@group(0) @binding(1) var<storage, read> w: array<vec2u>; // four fp16 columns per element
+fn weightQuad(i: u32) -> vec4f { let q = w[i]; return vec4f(unpack2x16float(q.x), unpack2x16float(q.y)); }`);
 
 /**
  * Gated multi-head attention, head dim 32, FlashAttention-style: keys and values stream through

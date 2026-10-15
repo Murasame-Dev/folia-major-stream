@@ -2,11 +2,11 @@
 
 build/beat_this_wgsl/export_weights.py
 
-    python export_weights.py CKPT OUT.bin
+    python export_weights.py CKPT OUT.bin [--f16]
 
-Writes OUT.bin (little-endian f32, every tensor 256-byte aligned) and OUT.json (name -> offset in
-floats, shape). Everything that is a constant transform of the weights happens here, once, so the
-kernels never redo it per chunk:
+Writes OUT.bin (little-endian, every tensor 256-byte aligned) and OUT.json (name -> byte offset,
+shape, dtype, and for matmul weights the padded row stride). Everything that is a constant
+transform of the weights happens here, once, so the kernels never redo it per chunk:
 
 - BatchNorms folded: bn1d into a per-frequency scale/shift, every bn2d into its convolution, whose
   weights are stored [kf, 3, cin, cout] so the conv runs as a GEMM with K = (df, dt, ci).
@@ -18,6 +18,17 @@ kernels never redo it per chunk:
   matmul produces q, k, v and the gate logits together (bias is zero for the QKV columns).
 - The frontend's flatten is "b c f t -> b t (c f)"; the runtime flattens as (f c) instead, so the
   rows of frontend.linear are permuted to match.
+- Matmul weights ([K, N]: qkvg, out, w1, w2, frontend.linear, head) have their rows zero-padded to
+  a multiple of 4 columns (`stride`), so the matmul reads every column quad as one aligned load.
+
+With --f16 the matmul weights are stored as fp16 (half the file); the matmul unpacks them and still
+computes in f32. Everything else stays f32: the convolutions, every bias, the stem BatchNorm
+(x * scale + shift cancels, so its rounding error is amplified ~15 dB) and rope.freqs (the angle is
+position * freq up to position 1499, so fp16 alone takes the logits from ~124 dB to 51 dB).
+Measured with fp16 matmul weights: logits ~85 dB against the f32 export, identical beat lists on
+the seven test tracks. The rest of that gap is the model, not the format: one head of the last
+layer scores ~18 on frames next to a beat, and its near one-hot softmax magnifies any rounding of
+its input there by ~25 dB (the same frames are the worst ones for f32 against float64).
 """
 import json
 import math
@@ -27,7 +38,8 @@ import numpy as np
 import torch
 
 HEAD_DIM = 32
-ALIGN = 64  # floats, i.e. 256 bytes - WebGPU's minStorageBufferOffsetAlignment
+ALIGN = 256  # bytes - WebGPU's minStorageBufferOffsetAlignment
+MATMUL_WEIGHT = ('.qkvg.w', '.out.w', '.w1', '.w2', 'frontend.linear.w', 'head.w')
 
 
 def bn_affine(sd, prefix, eps=1e-5):
@@ -38,6 +50,7 @@ def bn_affine(sd, prefix, eps=1e-5):
 
 def main():
     ckpt_path, out_path = sys.argv[1:3]
+    f16 = '--f16' in sys.argv[3:]
     ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=True)
     sd = {k.removeprefix('model.'): v.double() for k, v in ckpt['state_dict'].items()}
     hp = ckpt['hyper_parameters']
@@ -106,16 +119,24 @@ def main():
     offset = 0
     with open(out_path, 'wb') as out:
         for name, array in tensors.items():
-            manifest['tensors'][name] = {'offset': offset, 'shape': list(array.shape)}
+            entry = {'byte_offset': offset, 'shape': list(array.shape), 'dtype': 'f32'}
+            if name.endswith(MATMUL_WEIGHT):
+                k, n = array.shape
+                entry['stride'] = n + (-n % 4)
+                array = np.pad(array, ((0, 0), (0, entry['stride'] - n)))
+                if f16:
+                    array = array.astype(np.float16)
+                    entry['dtype'] = 'f16'
+            manifest['tensors'][name] = entry
             out.write(array.tobytes())
-            offset += array.size
+            offset += array.nbytes
             pad = -offset % ALIGN
-            out.write(np.zeros(pad, np.float32).tobytes())
+            out.write(bytes(pad))
             offset += pad
-    manifest['floats'] = offset
+    manifest['bytes'] = offset
     with open(out_path.removesuffix('.bin') + '.json', 'w') as f:
         json.dump(manifest, f, indent=1)
-    print(f'{len(tensors)} tensors, {offset * 4 / 1e6:.1f} MB')
+    print(f'{len(tensors)} tensors, {offset / 1e6:.1f} MB')
 
 
 if __name__ == '__main__':
