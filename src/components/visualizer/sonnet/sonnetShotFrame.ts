@@ -17,7 +17,12 @@ import { hashSonnetSeed } from './sonnetRandom';
 import type { ShotView } from './sonnetSceneBuilder';
 import { isSonnetEmphasisRole } from './sonnetTypographyLayout';
 import { resolveSonnetSegmentCameraFocus } from './sonnetCameraTracking';
-import { applySonnetHaloFlare, resolveSonnetLineFlashAlpha, type SonnetBeatFxFrame } from './sonnetBeatFx';
+import {
+    applySonnetHaloFlare,
+    resolveSonnetLineFlashAlpha,
+    restoreSonnetBeatFxLayers,
+    type SonnetBeatFxFrame,
+} from './sonnetBeatFx';
 
 // src/components/visualizer/sonnet/sonnetShotFrame.ts
 // 单个 shot 的逐帧姿态：镜头运动、间隙漂移与呼吸、逐段落焦点跟踪、MG / 引导线 / 开放画框时间，
@@ -31,7 +36,7 @@ export interface SonnetShotFrameContext {
     audioPower?: MotionValue<number>;
     /** Mod multiplier lookup; 1 when the key is absent. */
     mod: (key: string) => number;
-    /** Experimental beat FX for this frame; null/absent unless the dev flag is on. */
+    /** 智能动感 for this frame; null/absent unless it is on and the track's beats are installed. */
     beatFx?: SonnetBeatFxFrame | null;
 }
 
@@ -176,6 +181,10 @@ export const updateSonnetShot = (
         if (view.mgBackgroundLayer) view.mgBackgroundLayer.alpha = lineAlpha;
         if (view.mgFixedGeoLayer) view.mgFixedGeoLayer.alpha = lineAlpha;
         applySonnetHaloFlare(view.haloLayer, beatFx.flare);
+    } else if (tuning.smartBeatEnabled) {
+        // On, but no beats for this track (yet): the original frame, including what an earlier
+        // beat FX frame - the previous track's - left on these layers.
+        restoreSonnetBeatFxLayers([view.mgGeoLayer, view.mgBackgroundLayer, view.mgFixedGeoLayer], view.haloLayer);
     }
 
     if (view.mgParticleLayer) {

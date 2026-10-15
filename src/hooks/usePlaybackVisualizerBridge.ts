@@ -7,7 +7,6 @@ import type { AudioBands, LyricData } from '../types';
 import { setCurrentLineIndex, setPlayerState } from '../stores/usePlaybackStore';
 import { selectDisplayLyrics, usePlaybackStore } from '../stores/usePlaybackStore';
 import { audioBands, audioPower, currentTime, lyricCurrentTime } from '../stores/motionSignals';
-import { isBeatFxEnabled } from '../services/beatFx/beatFxDevFlag';
 import { tickBeatFx } from '../services/beatFx/beatFxLive';
 import { useBeatFxTrack } from './useBeatFxTrack';
 
@@ -76,8 +75,10 @@ export function usePlaybackVisualizerBridge({
     const lyrics = usePlaybackStore(selectDisplayLyrics);
 
     const currentLineIndexRef = useRef(-1);
-    // Experimental beat FX (dev flag only): loads the track's beats; the clock is stepped below.
-    useBeatFxTrack();
+    // Sonnet's 智能动感: loads the track's beats while it is on; the clock is stepped below. A ref, so
+    // switching it does not rebuild the frame loop.
+    const beatFxWantedRef = useRef(false);
+    beatFxWantedRef.current = useBeatFxTrack();
 
     const updateLoop = useCallback(() => {
         // Normally the active deck; the outgoing one for as long as a blend holds the picture on
@@ -232,7 +233,7 @@ export function usePlaybackVisualizerBridge({
             }
         }
 
-        if (isBeatFxEnabled()) {
+        if (beatFxWantedRef.current) {
             tickBeatFx(isActuallyPlaying ? audioElement : null, analyserRef.current?.context);
         }
 

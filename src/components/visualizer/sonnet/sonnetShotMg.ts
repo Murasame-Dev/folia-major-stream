@@ -31,7 +31,7 @@ import {
 import { SONNET_THEMED_GEO_VARIANT_START } from './sonnetThemedShotMg';
 import { resolveSonnetShotMgBleed } from './sonnetShotMgViewport';
 import { resolveSonnetIconOnsetPop } from './sonnetBeatFx';
-import { isBeatFxEnabled } from '../../../services/beatFx/beatFxDevFlag';
+import { isBeatFxReady } from '../../../services/beatFx/beatFxLive';
 
 // src/components/visualizer/sonnet/sonnetShotMg.ts
 // Builds PV style high-density semantic decorative elements (HUD, Geometric Chaos, Particles)
@@ -48,6 +48,8 @@ export const buildSonnetShotMg = (
     height: number,
     seed: number,
     iconTextures: Map<string, import('pixi.js').Texture>,
+    /** 智能动感: icons pop on lyric onsets, once the track's beats are installed. */
+    smartBeatEnabled = false,
 ) => {
     const { Container } = pixi;
     const container = new Container();
@@ -731,7 +733,6 @@ export const buildSonnetShotMg = (
     const particleLayer = decor.layer;
     const iconAnimations = decor.iconAnimations;
     let smoothedIconAudio = 0;
-    const beatFxEnabled = isBeatFxEnabled();
 
     iconAnimations.forEach((icon, index) => {
         icon.entryPhase = resolveSonnetIconEntryPhase(index, iconAnimations.length);
@@ -782,9 +783,9 @@ export const buildSonnetShotMg = (
             for (const part of c.fixedGeoParts as AnimatedGraphics[]) part.update(rawProgress);
         }
 
-        // Experimental beat FX (dev flag): icons pop on lyric segment onsets instead of breathing
+        // 智能动感, once the beats are in: icons pop on lyric segment onsets instead of breathing
         // with the bands. Replaces the band mix below rather than stacking on it.
-        const onsetPop = beatFxEnabled ? resolveSonnetIconOnsetPop(time, cues) : null;
+        const onsetPop = smartBeatEnabled && isBeatFxReady() ? resolveSonnetIconOnsetPop(time, cues) : null;
         if (!onsetPop) {
             const audioEnergy = normalizeAudioLevel(audioBass) * 0.34
                 + normalizeAudioLevel(audioVocal) * 0.52

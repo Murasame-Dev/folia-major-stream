@@ -100,7 +100,7 @@ export class SonnetPixiRuntime {
     private readonly iconUrls = new Set<string>();
     private activeParagraphIndex = -1;
     private destroyed = false;
-    /** Experimental beat FX frame reader; yields null unless the dev flag is on. */
+    /** 智能动感 frame reader; yields null unless it is on and the track's beats are installed. */
     private readonly readBeatFx = createSonnetBeatFxReader();
     /**
      * An in-flight song handover. Driven by the wall clock, unlike every other transition here:
@@ -356,7 +356,7 @@ export class SonnetPixiRuntime {
         );
         const hasCredits = this.creditsContainer.children.length > 0;
         // Read once per frame, before any shot, so every consumer sees the same envelopes.
-        const beatFx = this.options.staticMode ? null : this.readBeatFx(this.options.audioBands);
+        const beatFx = this.options.staticMode ? null : this.readBeatFx(this.options.audioBands, this.options.tuning);
         const shotFrameContext: SonnetShotFrameContext = {
             tuning: this.options.tuning,
             theme: this.options.theme,

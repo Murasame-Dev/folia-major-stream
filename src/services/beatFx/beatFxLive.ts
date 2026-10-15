@@ -1,6 +1,6 @@
 import { beatImpact, downbeatImpact } from '../../stores/motionSignals';
 import { createBeatFxClockState, stepBeatFxClock, type BeatFxEvent } from '../../utils/beatFxClock';
-import { getBeatFxOffsetSec, isBeatFxEnabled } from './beatFxDevFlag';
+import { getBeatFxOffsetSec } from './beatFxConfig';
 import type { BeatFxSourceKind } from './beatFxSource';
 
 // src/services/beatFx/beatFxLive.ts
@@ -47,7 +47,7 @@ const debug: BeatFxDebug = {
     beatImpact: 0,
     downbeatImpact: 0,
 };
-if (isBeatFxEnabled() && typeof window !== 'undefined') window.__foliaBeatFx = debug;
+if (typeof window !== 'undefined') window.__foliaBeatFx = debug;
 
 /** Switches the clock to a new track; events arrive later via `setBeatFxEvents`. */
 export const beginBeatFxTrack = (key: string | null) => {
@@ -70,6 +70,23 @@ export const setBeatFxEvents = (key: string, events: BeatFxEvent[], source: Beat
     debug.source = source;
     debug.note = note ?? null;
     debug.eventCount = events.length;
+};
+
+/**
+ * Whether the playing track's beat list is installed. Until it is - the analysis is running, the
+ * track is not cached, the model is not downloaded, the GPU could not take it - Sonnet draws its
+ * original frame rather than a beat FX frame with nothing driving it.
+ */
+export const isBeatFxReady = (): boolean => trackKey !== null && state.events.length > 0;
+
+/** Stops the clock and zeroes both envelopes; called when the FX are switched off. */
+export const stopBeatFx = () => {
+    beginBeatFxTrack(null);
+    state.beatImpact = 0;
+    state.downbeatImpact = 0;
+    beatImpact.set(0);
+    downbeatImpact.set(0);
+    lastStepAt = null;
 };
 
 /** Alternating ±1 for the camera tilt; flips on every fired beat. */

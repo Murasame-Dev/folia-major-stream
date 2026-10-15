@@ -17,7 +17,6 @@ import {
     type SegmentView,
 } from './sonnetTextViewBuilder';
 import { createSonnetGlitchEffect, type SonnetGlitchEffect } from './sonnetGlitchFilter';
-import { isBeatFxEnabled } from '../../../services/beatFx/beatFxDevFlag';
 import {
     buildSonnetMeasuredBoundsDebug,
     createSonnetShotDebugInfo,
@@ -201,7 +200,8 @@ export const buildSonnetScene = (
             width,
             height,
             shotSeed,
-            iconTextures
+            iconTextures,
+            options.tuning.smartBeatEnabled,
         );
         shotContainer.addChild(mgLayer);
         const mgBackgroundLayer = (mgLayer as any).bgLayer as import('pixi.js').Container | undefined;
@@ -347,8 +347,8 @@ export const buildSonnetScene = (
         container.filters = [...(container.filters ?? []), transitionBlurFilter];
         postProcessFilters.push(transitionBlurFilter);
     }
-    // The experimental beat FX (dev flag) reuse this filter for the downbeat tear.
-    const transitionGlitchEffect = (options.tuning.enableTransitions || isBeatFxEnabled()) && !options.staticMode
+    // 智能动感 reuses this filter for the downbeat tear.
+    const transitionGlitchEffect = (options.tuning.enableTransitions || options.tuning.smartBeatEnabled) && !options.staticMode
         ? createSonnetGlitchEffect(pixi)
         : null;
     if (transitionGlitchEffect) {

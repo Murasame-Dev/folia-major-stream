@@ -1,18 +1,23 @@
-import type { AudioBands } from '../../../types';
+import type { AudioBands, SonnetTuning } from '../../../types';
 import { beatImpact, downbeatImpact } from '../../../stores/motionSignals';
-import { isBeatFxEnabled } from '../../../services/beatFx/beatFxDevFlag';
-import { getBeatFxRotationSign } from '../../../services/beatFx/beatFxLive';
+import { getBeatFxRotationSign, isBeatFxReady } from '../../../services/beatFx/beatFxLive';
 import type { SonnetAnimationCue } from './types';
 
 // src/components/visualizer/sonnet/sonnetBeatFx.ts
-// Experimental Sonnet beat FX (dev flag `folia.dev.beatFx` only). Pure envelope math plus a
-// per-runtime frame reader; each effect follows its own signal:
+// Sonnet's 智能动感 (`SonnetTuning.smartBeatEnabled`). Pure envelope math plus a per-runtime frame
+// reader; each effect follows its own signal:
 //   camera punch  <- beatImpact      (zoom + alternating tilt, layered on the shot camera)
 //   mono tear     <- downbeatImpact  (shares the transition glitch filter, combined with max)
 //   glow flare    <- downbeatImpact  (halo layer alpha)
 //   icon pop      <- lyric segment onsets (replaces the band-driven icon breathing)
 //   line flash    <- treble band, smoothed, continuous
-// Constants mirror the approved mockup (folia-header-mock/sonnet-beat/index.html).
+// Constants mirror the approved mockup (folia-header-mock/sonnet-beat/index.html). The 轻拍 strength
+// (`beatIntensity`) scales the first line, the 重拍 strength (`downbeatIntensity`) the next two and the
+// downbeat's share of the zoom; icon pop and line flash are not beats and follow the switch only.
+//
+// Until the playing track's beat list is installed (beatFxLive's `isBeatFxReady`) the reader answers
+// null and Sonnet draws its original frame - no half-on state while the analysis runs, or on a machine
+// it cannot run on.
 
 export const SONNET_BEAT_FX = {
     /** Mockup used 3% at 118 BPM; at ~160 BPM that read as drift, so beats punch harder and shorter. */
@@ -60,21 +65,28 @@ export const resolveSonnetBeatFxFrame = (
     lineLift,
 });
 
+/** Whether this frame is a beat FX frame: 智能动感 on and the track's beats installed. */
+export const isSonnetBeatFxActive = (tuning: Pick<SonnetTuning, 'smartBeatEnabled'>): boolean =>
+    tuning.smartBeatEnabled && isBeatFxReady();
+
 /**
- * Creates the per-runtime frame reader. Returns null every frame while the flag is off, so callers
- * keep their original code path untouched. Holds only the treble smoothing state.
+ * Creates the per-runtime frame reader. Returns null every frame the FX are not active, so callers
+ * keep their original code path. Holds only the treble smoothing state.
  */
 export const createSonnetBeatFxReader = () => {
     let smoothedTreble = 0;
-    return (audioBands: AudioBands | undefined): SonnetBeatFxFrame | null => {
-        if (!isBeatFxEnabled()) return null;
+    return (audioBands: AudioBands | undefined, tuning: SonnetTuning): SonnetBeatFxFrame | null => {
+        if (!isSonnetBeatFxActive(tuning)) {
+            smoothedTreble = 0;
+            return null;
+        }
         const treble = normalizeLevel(audioBands?.treble?.get() ?? 0);
         // Ignore the idle breathing floor, then ease: quick attack, slow release, no discrete trigger.
         const target = Math.min(1, Math.max(0, (treble - 0.04) / 0.35));
         smoothedTreble += (target - smoothedTreble) * (target > smoothedTreble ? 0.25 : 0.08);
         return resolveSonnetBeatFxFrame(
-            beatImpact.get(),
-            downbeatImpact.get(),
+            beatImpact.get() * tuning.beatIntensity,
+            downbeatImpact.get() * tuning.downbeatIntensity,
             getBeatFxRotationSign(),
             performance.now() / 1000,
             smoothedTreble,
@@ -113,4 +125,17 @@ export const applySonnetHaloFlare = (haloLayer: { alpha: number }, flare: number
         haloBaseAlpha.set(haloLayer, base);
     }
     haloLayer.alpha = Math.min(1, base + (1 - base) * Math.min(1, flare));
+};
+
+/**
+ * Puts back what a beat FX frame changed on a shot, for the frames between "active" and "not": the
+ * MG line layers are built at full alpha, and the halo goes back to its built alpha.
+ */
+export const restoreSonnetBeatFxLayers = (
+    lineLayers: ReadonlyArray<{ alpha: number } | undefined>,
+    haloLayer: { alpha: number },
+) => {
+    for (const layer of lineLayers) if (layer) layer.alpha = 1;
+    const base = haloBaseAlpha.get(haloLayer);
+    if (base !== undefined) haloLayer.alpha = base;
 };

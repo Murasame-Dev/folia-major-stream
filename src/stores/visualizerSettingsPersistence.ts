@@ -364,6 +364,11 @@ export const readStoredSonnetTuning = (): SonnetTuning => {
             postProcessVignette: resolvePendoloNumber(parsed.postProcessVignette, DEFAULT_SONNET_TUNING.postProcessVignette, 0, 2),
             postProcessLensDistortion: resolvePendoloNumber(parsed.postProcessLensDistortion, DEFAULT_SONNET_TUNING.postProcessLensDistortion, 0, 2),
             postProcessLensDispersion: resolvePendoloNumber(parsed.postProcessLensDispersion, DEFAULT_SONNET_TUNING.postProcessLensDispersion, 0, 1),
+            smartBeatEnabled: typeof parsed.smartBeatEnabled === 'boolean'
+                ? parsed.smartBeatEnabled
+                : DEFAULT_SONNET_TUNING.smartBeatEnabled,
+            beatIntensity: resolvePendoloNumber(parsed.beatIntensity, DEFAULT_SONNET_TUNING.beatIntensity, 0, 2),
+            downbeatIntensity: resolvePendoloNumber(parsed.downbeatIntensity, DEFAULT_SONNET_TUNING.downbeatIntensity, 0, 2),
         };
     } catch {
         return DEFAULT_SONNET_TUNING;

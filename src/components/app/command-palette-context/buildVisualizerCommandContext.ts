@@ -31,6 +31,10 @@ export const buildVisualizerCommandContext = (
             const videoLayer = useVideoLayerSettingsStore.getState();
             videoLayer.setVideoLayerEnabled(!videoLayer.videoLayerEnabled);
         },
+        toggleSonnetSmartBeat: () => {
+            const latest = useVisualizerSettingsStore.getState();
+            latest.handleSetSonnetTuning({ smartBeatEnabled: !latest.sonnetTuning.smartBeatEnabled });
+        },
         pickVideoLayerFile: () => useVideoLayerSettingsStore.getState().pickLocalFile(),
         usesWordSegmentation: Boolean(getVisualizerRegistryEntry(visualizer.visualizerMode).usesWordSegmentation),
         lyricSegmentation: {

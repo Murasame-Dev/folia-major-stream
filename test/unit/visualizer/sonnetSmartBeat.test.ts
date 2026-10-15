@@ -1,0 +1,144 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_SONNET_TUNING, type SonnetTuning } from '@/types';
+import { useVisualizerSettingsStore } from '@/stores/useVisualizerSettingsStore';
+import { compressConfig, decompressConfig } from '@/utils/appearanceCodec';
+import { beatImpact, downbeatImpact } from '@/stores/motionSignals';
+import { beginBeatFxTrack, setBeatFxEvents, stopBeatFx } from '@/services/beatFx/beatFxLive';
+import { isSmartBeatWanted } from '@/services/beatFx/beatFxConfig';
+import {
+    SONNET_BEAT_FX,
+    createSonnetBeatFxReader,
+    applySonnetHaloFlare,
+    restoreSonnetBeatFxLayers,
+} from '@/components/visualizer/sonnet/sonnetBeatFx';
+
+// test/unit/visualizer/sonnetSmartBeat.test.ts
+// Sonnet's 智能动感: the setting at the store and codec boundaries, when the FX run at all, and how
+// the 轻拍 / 重拍 strengths reach the frame.
+
+const createLocalStorageMock = (): Storage => {
+    const values = new Map<string, string>();
+    return {
+        get length() {
+            return values.size;
+        },
+        getItem: key => values.get(key) ?? null,
+        key: index => Array.from(values.keys())[index] ?? null,
+        setItem: (key, value) => values.set(key, value),
+        removeItem: key => values.delete(key),
+        clear: () => values.clear(),
+    };
+};
+
+const tuning = (patch: Partial<SonnetTuning> = {}): SonnetTuning => ({ ...DEFAULT_SONNET_TUNING, ...patch });
+
+describe('Sonnet 智能动感 setting', () => {
+    let storage: Storage;
+
+    beforeEach(() => {
+        storage = createLocalStorageMock();
+        vi.stubGlobal('localStorage', storage);
+        vi.stubGlobal('window', { localStorage: storage });
+        useVisualizerSettingsStore.setState({ sonnetTuning: { ...DEFAULT_SONNET_TUNING } });
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it('is off by default at full strength', () => {
+        expect(DEFAULT_SONNET_TUNING.smartBeatEnabled).toBe(false);
+        expect(DEFAULT_SONNET_TUNING.beatIntensity).toBe(1);
+        expect(DEFAULT_SONNET_TUNING.downbeatIntensity).toBe(1);
+    });
+
+    it('persists the switch and clamps both strengths to 0..2', () => {
+        useVisualizerSettingsStore.getState().handleSetSonnetTuning({
+            smartBeatEnabled: true,
+            beatIntensity: 5,
+            downbeatIntensity: -1,
+        });
+        expect(useVisualizerSettingsStore.getState().sonnetTuning).toMatchObject({
+            smartBeatEnabled: true,
+            beatIntensity: 2,
+            downbeatIntensity: 0,
+        });
+        expect(JSON.parse(storage.getItem('sonnet_tuning') ?? '{}')).toMatchObject({
+            smartBeatEnabled: true,
+            beatIntensity: 2,
+            downbeatIntensity: 0,
+        });
+    });
+
+    it('round-trips through visual config export and import', () => {
+        const sonnetTuning = tuning({ smartBeatEnabled: true, beatIntensity: 1.4, downbeatIntensity: 0.3 });
+        const decoded = decompressConfig(compressConfig({ sonnetTuning }));
+        expect(decoded.sonnetTuning).toMatchObject({ smartBeatEnabled: true, beatIntensity: 1.4, downbeatIntensity: 0.3 });
+    });
+
+    it('imports an older config without the fields as off', () => {
+        const { smartBeatEnabled: _s, beatIntensity: _b, downbeatIntensity: _d, ...older } = DEFAULT_SONNET_TUNING;
+        const decoded = decompressConfig(compressConfig({ sonnetTuning: older }));
+        expect(decoded.sonnetTuning).toMatchObject({ smartBeatEnabled: false, beatIntensity: 1, downbeatIntensity: 1 });
+    });
+});
+
+describe('when the beat FX run', () => {
+    it('needs Sonnet on screen, the switch on and no static mode', () => {
+        expect(isSmartBeatWanted('sonnet', { smartBeatEnabled: true }, false)).toBe(true);
+        expect(isSmartBeatWanted('sonnet', { smartBeatEnabled: false }, false)).toBe(false);
+        expect(isSmartBeatWanted('tempera', { smartBeatEnabled: true }, false)).toBe(false);
+        expect(isSmartBeatWanted('sonnet', { smartBeatEnabled: true }, true)).toBe(false);
+    });
+});
+
+describe('Sonnet beat FX frame', () => {
+    afterEach(() => {
+        stopBeatFx();
+    });
+
+    const installBeats = () => {
+        beginBeatFxTrack('track');
+        setBeatFxEvents('track', [{ t: 1, kind: 'beat' }, { t: 2, kind: 'downbeat' }], 'beat_this');
+    };
+
+    it('is null while the switch is off, even with beats installed', () => {
+        installBeats();
+        expect(createSonnetBeatFxReader()(undefined, tuning())).toBeNull();
+    });
+
+    it('is null while the track has no beats yet, so the original frame is drawn', () => {
+        beginBeatFxTrack('track');
+        expect(createSonnetBeatFxReader()(undefined, tuning({ smartBeatEnabled: true }))).toBeNull();
+    });
+
+    it('scales the beat layer by 轻拍 and the downbeat layer by 重拍, independently', () => {
+        installBeats();
+        beatImpact.set(1);
+        downbeatImpact.set(1);
+        const read = createSonnetBeatFxReader();
+
+        const noDownbeat = read(undefined, tuning({ smartBeatEnabled: true, beatIntensity: 1, downbeatIntensity: 0 }))!;
+        expect(noDownbeat.zoom).toBeCloseTo(1 + SONNET_BEAT_FX.zoomPercent / 100);
+        expect(noDownbeat.tear).toBe(0);
+        expect(noDownbeat.flare).toBe(0);
+        expect(Math.abs(noDownbeat.rotation)).toBeCloseTo(SONNET_BEAT_FX.rotationDeg * Math.PI / 180);
+
+        const noBeat = read(undefined, tuning({ smartBeatEnabled: true, beatIntensity: 0, downbeatIntensity: 2 }))!;
+        expect(noBeat.zoom).toBeCloseTo(1 + 2 * SONNET_BEAT_FX.downbeatZoomPercent / 100);
+        expect(noBeat.rotation).toBe(0);
+        expect(noBeat.tear).toBeCloseTo(2 * SONNET_BEAT_FX.tear);
+        expect(noBeat.flare).toBeCloseTo(2 * SONNET_BEAT_FX.flare);
+    });
+
+    it('puts the line and halo layers back to their built alpha', () => {
+        const lines = [{ alpha: 0.8 }, undefined, { alpha: 0.9 }];
+        const halo = { alpha: 0.35 };
+        applySonnetHaloFlare(halo, 1);
+        expect(halo.alpha).toBe(1);
+        restoreSonnetBeatFxLayers(lines, halo);
+        expect(lines[0]!.alpha).toBe(1);
+        expect(lines[2]!.alpha).toBe(1);
+        expect(halo.alpha).toBe(0.35);
+    });
+});

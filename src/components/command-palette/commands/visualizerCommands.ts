@@ -37,6 +37,7 @@ export const visualizerCommands: CommandPaletteCommand[] = [
         execute: () => false,
     }),
     createVisualizerCommand('sonnet', 'Visualizer: Sonnet', 'Switch to Sonnet visualizer', ['sonnet', '商籁', '文字 pv', 'mg pv', 'vocaloid']),
+    createToggleCommand('sonnet-smart-beat-toggle', 'visualizer', 'Sonnet: smart beat', 'Turn beat_this-driven beat FX in Sonnet on or off', ['smart beat', 'beat fx', 'beat this', 'sonnet beat', '智能动感', '动感', '节拍', '商籁动感', '重拍', '轻拍'], context => context.visualizer.toggleSonnetSmartBeat()),
     createVisualizerCommand('tempera', 'Visualizer: Tempera', 'Switch to Tempera visualizer', ['tempera', '凝彩', 'dancai', 'dc', '色块 pv', 'block pv']),
     createVisualizerCommand('lumiere', 'Visualizer: Lumiere', 'Switch to Lumiere visualizer', ['lumiere', '绘光', '光束', '舞台光', 'stage light', 'light pv']),
     createVisualizerCommand('classic', 'Visualizer: Luminous', 'Switch to classic visualizer', ['visualizer classic', 'classic', '流光']),

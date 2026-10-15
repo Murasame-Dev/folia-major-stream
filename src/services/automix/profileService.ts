@@ -8,6 +8,7 @@ import { isCacheableAudioResponse } from '../playbackRecovery/mediaCacheGuard';
 import { getPlaybackAnalysisKey, getPlaybackRepresentation } from '../playbackRecovery/representationRegistry';
 import { analyseTrackOffThread, melSpectrogramOffThread } from './analysisOffThread';
 import { analyseBeatGrid, canRunBeatThis } from './beatThis';
+import { readStoredBeatGrid, storeBeatGrid } from './beatGridCache';
 import {
     measureEdges,
     PROFILE_SAMPLE_RATE,
@@ -344,10 +345,16 @@ export const ensureTrackProfile = async (request: ProfileRequest): Promise<void>
             // answer to nobody. `runModel` records whether the model RUNS; what it then answers is
             // separate, and the profile records this one - see `TrackProfile.gridless`.
             const runModel = request.wantGrid && canRunBeatThis();
-            const grid = channels && runModel
+            // A whole track Sonnet's 智能动感 already ran the model on is read back rather than run
+            // again, and a whole track measured here is kept for it (beatGridCache.ts). A head-only
+            // read neither uses nor stores one: its profile describes the head, and so must its grid.
+            const whole = !result.partial;
+            const storedGrid = channels && runModel && whole ? await readStoredBeatGrid(songKey) : null;
+            const grid = storedGrid ?? (channels && runModel
                 // Automix analyses minutes ahead of the transition, so the CPU may stand in for the GPU.
                 ? await analyseBeatGrid(await melSpectrogramOffThread(channels.mid), { cpuFallback: true })
-                : null;
+                : null);
+            if (grid && !storedGrid && whole) await storeBeatGrid(songKey, grid);
             const profile = buffer && channels
                 ? await analyseTrackOffThread(channels.mid, buffer.sampleRate, {
                     partial: result.partial,

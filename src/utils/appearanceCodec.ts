@@ -387,6 +387,9 @@ const compressSonnet = (t: any): any => ({
     ppv: t.postProcessVignette,
     ppld: t.postProcessLensDistortion,
     pplx: t.postProcessLensDispersion,
+    sbe: t.smartBeatEnabled,
+    bi: t.beatIntensity,
+    dbi: t.downbeatIntensity,
 });
 const decompressSonnet = (o: any): any => ({
     cameraIntensity: o.ci !== undefined ? o.ci : DEFAULT_SONNET_TUNING.cameraIntensity,
@@ -409,6 +412,9 @@ const decompressSonnet = (o: any): any => ({
     postProcessVignette: o.ppv !== undefined ? o.ppv : DEFAULT_SONNET_TUNING.postProcessVignette,
     postProcessLensDistortion: o.ppld !== undefined ? o.ppld : DEFAULT_SONNET_TUNING.postProcessLensDistortion,
     postProcessLensDispersion: o.pplx !== undefined ? o.pplx : DEFAULT_SONNET_TUNING.postProcessLensDispersion,
+    smartBeatEnabled: o.sbe !== undefined ? o.sbe : DEFAULT_SONNET_TUNING.smartBeatEnabled,
+    beatIntensity: o.bi !== undefined ? o.bi : DEFAULT_SONNET_TUNING.beatIntensity,
+    downbeatIntensity: o.dbi !== undefined ? o.dbi : DEFAULT_SONNET_TUNING.downbeatIntensity,
 });
 
 const compressTempera = (t: any): any => ({

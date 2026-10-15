@@ -459,6 +459,9 @@ export const useVisualizerSettingsStore = create<VisualizerSettingsState>((set, 
             postProcessVignette: resolvePendoloNumber(patch.postProcessVignette, prev.postProcessVignette, 0, 2),
             postProcessLensDistortion: resolvePendoloNumber(patch.postProcessLensDistortion, prev.postProcessLensDistortion, 0, 2),
             postProcessLensDispersion: resolvePendoloNumber(patch.postProcessLensDispersion, prev.postProcessLensDispersion, 0, 1),
+            smartBeatEnabled: typeof patch.smartBeatEnabled === 'boolean' ? patch.smartBeatEnabled : prev.smartBeatEnabled,
+            beatIntensity: resolvePendoloNumber(patch.beatIntensity, prev.beatIntensity, 0, 2),
+            downbeatIntensity: resolvePendoloNumber(patch.downbeatIntensity, prev.downbeatIntensity, 0, 2),
         };
         if (typeof window !== 'undefined') localStorage.setItem('sonnet_tuning', JSON.stringify(next));
         set({ sonnetTuning: next });
