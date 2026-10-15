@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 // resolving per DIRECTORY rather than per FILE would silently ignore half of what is installed.
 
 const require = createRequire(import.meta.url);
-const { resolveModelFile, modelsPresent, legacyLeftovers, MODEL_FILES } = require('../../../electron/analysis/modelPaths.cjs');
+const { resolveModelFile, modelsPresent, legacyLeftovers, MODEL_FILES, LEGACY_RUNTIME_BIN } = require('../../../electron/analysis/modelPaths.cjs');
 
 let root: string;
 let userDir: string;
@@ -70,13 +70,24 @@ describe('finding model weights', () => {
     // models to this one. A listener who has only those has nothing this version can run.
     it('does not count an earlier version\'s files as installed', () => {
         const old = path.join(root, 'old-version');
-        mkdirSync(path.join(old, 'runtime', 'bin'), { recursive: true });
+        const exe = path.join(old, 'runtime', ...LEGACY_RUNTIME_BIN);
+        mkdirSync(path.dirname(exe), { recursive: true });
+        writeFileSync(exe, 'not really python');
         for (const name of ['beat_this.onnx', 'htdemucs-v2.onnx', 'htdemucs.onnx']) writeFileSync(path.join(old, name), 'weights');
         expect(modelsPresent([old])).toEqual({ beat_this: false, htdemucs: false });
         expect(legacyLeftovers([old]).sort()).toEqual(
             ['beat_this.onnx', 'htdemucs-v2.onnx', 'htdemucs.onnx', 'runtime'].map(name => path.join(old, name)).sort(),
         );
         expect(legacyLeftovers([userDir, null])).toEqual([]);
+    });
+
+    // The listener's own directory may hold a folder called `runtime` that is nothing of ours. Only the
+    // old build's runtime - its interpreter where that build put it - is ever offered for deletion.
+    it('does not take a folder called runtime for the old Python runtime', () => {
+        const mine = path.join(root, 'someone-elses-runtime');
+        mkdirSync(path.join(mine, 'runtime', 'bin'), { recursive: true });
+        writeFileSync(path.join(mine, 'runtime', 'notes.txt'), 'mine');
+        expect(legacyLeftovers([mine])).toEqual([]);
     });
 
     it('does not mistake a directory of that name for the weights file', () => {

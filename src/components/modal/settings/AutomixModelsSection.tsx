@@ -268,7 +268,7 @@ const AutomixModelsSection: React.FC<{ isDaylight: boolean }> = ({ isDaylight })
                     nothing is worse than no button: it invites the click AND teaches nothing. An
                     earlier version's ONNX models and Python runtime count - nothing else would ever
                     remove them, and they are a few hundred MB this version cannot use. */}
-                {(status.models.some(model => model.path) || status.leftovers) && (
+                {(status.models.some(model => model.path) || status.leftoverBytes > 0) && (
                     <button
                         type="button"
                         onClick={() => setRemoveOpen(true)}
@@ -375,7 +375,8 @@ const AutomixModelsSection: React.FC<{ isDaylight: boolean }> = ({ isDaylight })
                 isDaylight={isDaylight}
                 title={t('options.modelRemoveAll')}
                 description={t('options.modelRemoveConfirm', {
-                    size: megabytes(status.models.reduce((sum, m) => sum + (m.path ? m.bytes : 0), 0)),
+                    // Everything the button deletes, an earlier version's leftovers included.
+                    size: megabytes(status.models.reduce((sum, m) => sum + (m.path ? m.bytes : 0), status.leftoverBytes)),
                 })}
                 confirmVariant="danger"
                 onConfirm={removeAll}

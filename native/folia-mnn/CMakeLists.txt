@@ -57,6 +57,9 @@ set_target_properties(folia_mnn PROPERTIES
     VISIBILITY_INLINES_HIDDEN ON)
 if(MSVC)
     set_property(TARGET folia_mnn PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    # windows.h otherwise defines min/max macros, and whichever file includes it first - ours or an
+    # MNN header - breaks std::min/std::max in every file after.
+    target_compile_definitions(folia_mnn PRIVATE NOMINMAX)
 endif()
 # folia_dconv.cpp is an MNN CPU operator and uses MNN's internal headers, as MNN's own operators do -
 # so it must see them with MNN's own definitions (MNN_USE_THREAD_POOL and the rest change what those

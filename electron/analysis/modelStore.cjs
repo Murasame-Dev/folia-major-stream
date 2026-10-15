@@ -39,6 +39,14 @@ const fileIsModel = async (file, model) => {
     return await hashFile(file).catch(() => null) === model.sha256;
 };
 
+/** sizeOf below, synchronously, for `status`: it only ever walks the leftovers, a handful of files and one old runtime. */
+const sizeOfSync = (target) => {
+    const stat = fs.statSync(target, { throwIfNoEntry: false });
+    if (!stat) return 0;
+    if (!stat.isDirectory()) return stat.size;
+    return fs.readdirSync(target).reduce((total, name) => total + sizeOfSync(path.join(target, name)), 0);
+};
+
 /** Bytes on disk at `target`, which for a leftover Python runtime is a directory of 1400 files. */
 const sizeOf = async (target) => {
     const stat = await fsp.stat(target);
@@ -296,7 +304,7 @@ const createModelStore = ({ getModelsDirs, getDownloadDir, onProgress, onChanged
      *
      * `.part` files go too. They are ours, worth up to 190MB each, and nothing else will ever clean them up.
      * So does what earlier versions installed and this one no longer runs - the ONNX models and the Python
-     * runtime (modelPaths.cjs LEGACY_ENTRIES) - which nothing else would ever clean up either.
+     * runtime (modelPaths.cjs LEGACY_FILES) - which nothing else would ever clean up either.
      */
     const removeAll = async () => {
         const searched = dirs();
@@ -348,9 +356,10 @@ const createModelStore = ({ getModelsDirs, getDownloadDir, onProgress, onChanged
     const status = () => ({
         manual: manifest.manual,
         downloadDir: getDownloadDir(),
-        // Files an earlier version installed and this one cannot run (modelPaths.cjs LEGACY_ENTRIES):
-        // the page offers "delete all" for them even when no current model is installed.
-        leftovers: legacyLeftovers(dirs()).length > 0,
+        // Bytes an earlier version installed and this one cannot run (modelPaths.cjs LEGACY_FILES):
+        // the page offers "delete all" for them even when no current model is installed, and counts
+        // them in what it says that will free.
+        leftoverBytes: legacyLeftovers(dirs()).reduce((total, file) => total + sizeOfSync(file), 0),
         models: ENTRIES.map(model => ({
             name: model.name,
             file: model.file,

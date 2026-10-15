@@ -31,16 +31,27 @@ const MODEL_FILES = {
 };
 
 /**
- * What earlier versions installed and this one no longer runs: the ONNX models and the Python runtime
- * htdemucs ran in. Nothing resolves them any more, so nothing would ever delete them either - up to
- * a few hundred MB per directory - and "delete all models" removes these too (modelStore.cjs removeAll).
+ * What earlier versions installed and this one no longer runs: the ONNX models, and the Python runtime
+ * htdemucs ran in. Nothing resolves them any more, so nothing would ever delete them either - up to a
+ * few hundred MB per directory - and "delete all models" removes these too (modelStore.cjs removeAll).
+ *
+ * The files go by exact name. The runtime is a DIRECTORY named `runtime`, and the first directory
+ * searched is one the listener chose, so a folder of that name counts only with the interpreter the
+ * old build put inside it - never `rm -rf` on a name alone.
  */
-const LEGACY_ENTRIES = ['beat_this.onnx', 'htdemucs-v2.onnx', 'htdemucs.onnx', 'runtime', 'runtime.part'];
+const LEGACY_FILES = ['beat_this.onnx', 'htdemucs-v2.onnx', 'htdemucs.onnx'];
+const LEGACY_RUNTIME = 'runtime';
+/** Where the old build (build/buildPythonRuntime.mjs, removed) put the interpreter inside it. */
+const LEGACY_RUNTIME_BIN = process.platform === 'win32' ? ['python.exe'] : ['bin', 'python3'];
 
-/** The legacy files and directories present in `dirs`, as paths. */
-const legacyLeftovers = (dirs) => dirs.filter(Boolean).flatMap(dir => LEGACY_ENTRIES
-    .map(name => path.join(dir, name))
-    .filter(file => fs.statSync(file, { throwIfNoEntry: false })));
+/** The legacy files and runtime directories present in `dirs`, as paths. */
+const legacyLeftovers = (dirs) => dirs.filter(Boolean).flatMap((dir) => {
+    const files = LEGACY_FILES.map(name => path.join(dir, name))
+        .filter(file => fs.statSync(file, { throwIfNoEntry: false })?.isFile());
+    const runtime = path.join(dir, LEGACY_RUNTIME);
+    const isOldRuntime = fs.statSync(path.join(runtime, ...LEGACY_RUNTIME_BIN), { throwIfNoEntry: false })?.isFile();
+    return isOldRuntime ? [...files, runtime] : files;
+});
 
 /**
  * The first of `dirs` that actually holds this model, or null.
@@ -72,5 +83,5 @@ const resolveModelFile = (dirs, name) => {
 const modelsPresent = (dirs) => Object.fromEntries(MODEL_NAMES.map(name => [name, resolveModelFile(dirs, name) !== null]));
 
 module.exports = {
-    MODEL_NAMES, MODEL_FILES, LEGACY_ENTRIES, legacyLeftovers, resolveModelFile, modelsPresent,
+    MODEL_NAMES, MODEL_FILES, LEGACY_FILES, LEGACY_RUNTIME_BIN, legacyLeftovers, resolveModelFile, modelsPresent,
 };

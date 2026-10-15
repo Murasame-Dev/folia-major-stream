@@ -15,11 +15,7 @@
 #include <malloc/malloc.h>
 #elif defined(_WIN32)
 #include <malloc.h>
-// windows.h otherwise defines min/max macros that break std::max.
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
+#include <windows.h>  // NOMINMAX comes from CMakeLists.txt, for every file at once
 #elif defined(__GLIBC__)
 #include <malloc.h>
 #endif
