@@ -1,5 +1,7 @@
 /// <reference types="@webgpu/types" />
-import { ATTENTION, CONV_GELU, FLATTEN, MATMUL, RMS_NORM, ROPE, STEM_BN, SUM_HEAD } from './kernels';
+import {
+    ATTENTION, CONV_GELU, FLATTEN, MATMUL, MATMUL_GELU, MATMUL_NORM, MATMUL_RESIDUAL, MATMUL_ROPE, STEM_BN, SUM_HEAD,
+} from './kernels';
 
 // src/services/automix/beatThisWgsl/runtime.ts
 // Runs one Beat This! chunk (mel [1500, 128] -> beat / downbeat logits [1500]) on a WebGPU device
@@ -37,8 +39,8 @@ const product = (shape: number[]) => shape.reduce((a, b) => a * b, 1);
 
 /** Short kernel names for profiling labels. */
 const KERNEL_NAMES = new Map<string, string>([
-    [STEM_BN, 'stem_bn'], [CONV_GELU, 'conv'], [RMS_NORM, 'rmsnorm'], [MATMUL, 'matmul'],
-    [ROPE, 'rope'], [ATTENTION, 'attention'], [FLATTEN, 'flatten'], [SUM_HEAD, 'sum_head'],
+    [STEM_BN, 'stem_bn'], [CONV_GELU, 'conv'], [MATMUL, 'matmul'],
+    [ATTENTION, 'attention'], [FLATTEN, 'flatten'], [SUM_HEAD, 'sum_head'],
 ]);
 
 export class BeatThisWgsl {
@@ -81,7 +83,6 @@ export class BeatThisWgsl {
         const melBuffer = storage(T * MEL_BINS);
         const stemIn = storage(T * MEL_BINS);
         const x = [storage(tokens0 * stem), storage(tokens0 * stem)];
-        const h = storage(tokens0 * stem);
         const qkv = storage(Math.max(tokens0 * maxWidth(stem), T * maxWidth(dim)));
         const o = storage(tokens0 * stem);
         const u = storage(Math.max(tokens0 * stem * ffMult, T * dim * ffMult));
@@ -133,13 +134,13 @@ export class BeatThisWgsl {
         const groups = (invocations: number): [number, number, number] => [Math.ceil(invocations / 64), 1, 1];
         const stage = (name: string, buffer: GPUBuffer, floats: number) => steps.push({ kind: 'stage', name, buffer, floats });
 
-        const rmsNorm = (input: GPUBuffer, gamma: string, rows: number, width: number) =>
-            dispatch(RMS_NORM, [{ buffer: input }, tensor(gamma), { buffer: h }], [rows, width], [rows, 1, 1]);
-        /** mode: 0 store, 1 GELU, 2 add into the output (residual). */
-        const matmul = (input: GPUBuffer, weight: string, bias: string | null, output: GPUBuffer, m: number, mode: number) => {
+        /** `flags`: MATMUL_* from kernels.ts; `rope` only matters with MATMUL_ROPE. */
+        const matmul = (input: GPUBuffer, weight: string, bias: string | null, output: GPUBuffer, m: number, flags: number,
+            rope = { posDiv: 1, posMod: 1, dmodel: 0 }) => {
             const [k, n] = shape(weight);
-            dispatch(MATMUL, [{ buffer: input }, tensor(weight), bias ? tensor(bias) : { buffer: zeros }, { buffer: output }],
-                [m, n, k, mode], [Math.ceil(n / 64), Math.ceil(m / 64), 1], weight.split('.').slice(-2).join('.'));
+            dispatch(MATMUL, [{ buffer: input }, tensor(weight), bias ? tensor(bias) : { buffer: zeros }, { buffer: output }, { buffer: ropeTable }],
+                [m, n, k, flags, rope.posDiv, rope.posMod, rope.dmodel, 0], [Math.ceil(n / 64), Math.ceil(m / 64), 1],
+                weight.split('.').slice(-2).join('.'));
         };
 
         /**
@@ -151,15 +152,13 @@ export class BeatThisWgsl {
             const heads = c / HEAD_DIM;
             const width = 3 * c + heads;
             scope = prefix;
-            rmsNorm(stream, `${prefix}.attn.norm`, rows, c);
-            matmul(h, `${prefix}.attn.qkvg.w`, `${prefix}.attn.qkvg.b`, qkv, rows, 0);
-            dispatch(ROPE, [{ buffer: qkv }, { buffer: ropeTable }], [rows, heads, width, c, axis.posDiv, axis.n], groups(rows * heads * 16));
+            matmul(stream, `${prefix}.attn.qkvg.w`, `${prefix}.attn.qkvg.b`, qkv, rows, MATMUL_NORM | MATMUL_ROPE,
+                { posDiv: axis.posDiv, posMod: axis.n, dmodel: c });
             dispatch(ATTENTION, [{ buffer: qkv }, { buffer: o }], [axis.n, heads, width, c, axis.seqStride, axis.batchStride],
                 [Math.ceil(axis.n / 64), heads, axis.batches]);
-            matmul(o, `${prefix}.attn.out.w`, null, stream, rows, 2);
-            rmsNorm(stream, `${prefix}.ff.norm`, rows, c);
-            matmul(h, `${prefix}.ff.w1`, `${prefix}.ff.b1`, u, rows, 1);
-            matmul(u, `${prefix}.ff.w2`, `${prefix}.ff.b2`, stream, rows, 2);
+            matmul(o, `${prefix}.attn.out.w`, null, stream, rows, MATMUL_RESIDUAL);
+            matmul(stream, `${prefix}.ff.w1`, `${prefix}.ff.b1`, u, rows, MATMUL_NORM | MATMUL_GELU);
+            matmul(u, `${prefix}.ff.w2`, `${prefix}.ff.b2`, stream, rows, MATMUL_RESIDUAL);
         };
 
         // Stem: BatchNorm1d over mel bins, then conv (4, 3) / stride 4 on frequency.
@@ -200,8 +199,7 @@ export class BeatThisWgsl {
             stage(`layer${layer}`, x[cur], T * dim);
         }
         scope = 'head';
-        rmsNorm(x[cur], 'final.norm', T, dim);
-        matmul(h, 'head.w', 'head.b', logits, T, 0);
+        matmul(x[cur], 'head.w', 'head.b', logits, T, MATMUL_NORM);
         dispatch(SUM_HEAD, [{ buffer: logits }, { buffer: outBuffer }], [T], groups(T));
         stage('logits', outBuffer, T * 2);
 

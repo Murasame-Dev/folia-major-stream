@@ -10,7 +10,9 @@ kernels never redo it per chunk:
 
 - BatchNorms folded: bn1d into a per-frequency scale/shift, every bn2d into its convolution, whose
   weights are stored [kf, 3, cin, cout] so the conv runs as a GEMM with K = (df, dt, ci).
-- RMSNorm gammas pre-multiplied by sqrt(dim).
+- RMSNorm gammas (times sqrt(dim)) folded into the rows of the Linear that consumes the normalised
+  input: normalize(x) * g @ W == (x @ (g[:, None] * W)) / ||x||, so the matmul only has to scale
+  each output row by 1/||x||, which it gets from the sum of squares of the A rows it reads anyway.
 - Linear weights transposed to [in, out], the layout the matmul kernel reads row by row.
 - Each attention's gate projection appended to its QKV projection as H extra output columns, so one
   matmul produces q, k, v and the gate logits together (bias is zero for the QKV columns).
@@ -47,17 +49,17 @@ def main():
     def put_attention(prefix, out):
         dim = sd[f'{prefix}.norm.gamma'].shape[0]
         heads = dim // HEAD_DIM
-        put(f'{out}.norm', sd[f'{prefix}.norm.gamma'] * math.sqrt(dim))
+        gamma = sd[f'{prefix}.norm.gamma'] * math.sqrt(dim)
         weight = torch.cat([sd[f'{prefix}.to_qkv.weight'], sd[f'{prefix}.to_gates.weight']], 0)  # [3D+H, D]
-        put(f'{out}.qkvg.w', weight.T)
+        put(f'{out}.qkvg.w', weight.T * gamma[:, None])
         put(f'{out}.qkvg.b', torch.cat([torch.zeros(3 * dim, dtype=torch.float64), sd[f'{prefix}.to_gates.bias']]))
         put(f'{out}.out.w', sd[f'{prefix}.to_out.0.weight'].T)
         assert heads == sd[f'{prefix}.to_gates.weight'].shape[0]
 
     def put_ff(prefix, out):
         dim = sd[f'{prefix}.net.0.gamma'].shape[0]
-        put(f'{out}.norm', sd[f'{prefix}.net.0.gamma'] * math.sqrt(dim))
-        put(f'{out}.w1', sd[f'{prefix}.net.1.weight'].T)
+        gamma = sd[f'{prefix}.net.0.gamma'] * math.sqrt(dim)
+        put(f'{out}.w1', sd[f'{prefix}.net.1.weight'].T * gamma[:, None])
         put(f'{out}.b1', sd[f'{prefix}.net.1.bias'])
         put(f'{out}.w2', sd[f'{prefix}.net.4.weight'].T)
         put(f'{out}.b2', sd[f'{prefix}.net.4.bias'])
@@ -90,8 +92,8 @@ def main():
     for i in range(hp['n_layers']):
         put_attention(f'transformer_blocks.layers.{i}.0', f'layer{i}.attn')
         put_ff(f'transformer_blocks.layers.{i}.1', f'layer{i}.ff')
-    put('final.norm', sd['transformer_blocks.norm.gamma'] * math.sqrt(sd['transformer_blocks.norm.gamma'].shape[0]))
-    put('head.w', sd['task_heads.beat_downbeat_lin.weight'].T)
+    final_gamma = sd['transformer_blocks.norm.gamma'] * math.sqrt(sd['transformer_blocks.norm.gamma'].shape[0])
+    put('head.w', sd['task_heads.beat_downbeat_lin.weight'].T * final_gamma[:, None])
     put('head.b', sd['task_heads.beat_downbeat_lin.bias'])
 
     # One rotary table is shared by every attention in the model; check rather than assume.
