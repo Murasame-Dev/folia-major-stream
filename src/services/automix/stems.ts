@@ -1,11 +1,11 @@
 import type { SongResult } from '../../types';
 import { getPlaybackSongKey, getPlaybackSourceRef } from '../../utils/appPlaybackGuards';
 import { onAudioCached } from '../audioCache';
-import { getCachedSongAudioBlob } from '../onlineMusic/resourceCache';
 import { getSongResourceCacheKey } from '../onlineMusic/resourceKeys';
 import { getPlaybackAnalysisKey, getPlaybackRepresentation } from '../playbackRecovery/representationRegistry';
-import { canRunBeatThis } from './beatThis';
-import { modelCanRun, noteModelFailed } from './modelAvailability';
+import { canRunBeatThis } from '../analysis/beatThis';
+import { modelCanRun, noteModelFailed } from '../analysis/modelAvailability';
+import { readLocalTrackBytes } from '../analysis/trackAudio';
 import { profilesSettled } from './profileService';
 // The one edge back the other way is `import type`, so it is erased and this is not a cycle.
 import { envelopeOf, lastVocalMoment } from './stemGesture';
@@ -402,40 +402,19 @@ export const getStemsByKey = (key: string | null, role: StemRole): TrackStems | 
  */
 const readLocalBytes = async (request: StemRequest): Promise<ArrayBuffer | null> => {
     const { song, audioUrl } = request;
-    const representation = getPlaybackRepresentation(song);
-    if (representation) {
-        try {
-            const response = await fetch(representation.url);
-            // An evicted transcode answers 404 with a text body, which must never reach the decoder.
-            if (!response.ok) throw new Error(`representation responded ${response.status}`);
-            return await response.arrayBuffer();
-        } catch {
-            return null;
-        }
-    }
-    const cached = await getCachedSongAudioBlob(song);
-    if (cached) return cached.arrayBuffer();
-
-    // A local URL already in hand: the outgoing track plays from a blob: URL, so its tail reads
-    // straight off that. An online URL is left alone - separation never downloads.
-    if (audioUrl) {
-        const isLocalUrl = audioUrl.startsWith('blob:') || audioUrl.startsWith('file:')
-            || getPlaybackSourceRef(song).kind !== 'online';
-        if (!isLocalUrl) return null;
-        try {
-            return await (await fetch(audioUrl)).arrayBuffer();
-        } catch {
-            return null;
-        }
-    }
-
-    // No cached bytes and no URL. The incoming head of a local track has neither - prefetchSong skips
-    // local files, so it never gets a prefetch URL, and no media-cache event will ever wake a parked
-    // request for a file that was always on disk. `readBytes` reads it from its own handle instead;
-    // this is the entry local-to-local transitions were missing, the whole of the "waiting... not in
-    // the media cache yet" loop that never resolved.
-    if (request.readBytes) return request.readBytes();
-    return null;
+    // The shared ladder (analysis/trackAudio.ts): representation, media cache, a local URL already in
+    // hand - the outgoing track plays from a blob: URL, so its tail reads straight off that - and
+    // for a local track with no URL, the file straight off its own handle. The incoming head of a
+    // local track has neither cached bytes nor a URL - prefetchSong skips local files, and no
+    // media-cache event will ever wake a parked request for a file that was always on disk - so that
+    // last rung, `readBytes`, is the entry local-to-local transitions were missing. An online URL is
+    // left alone: separation never downloads.
+    const found = await readLocalTrackBytes(song, {
+        representation: getPlaybackRepresentation(song),
+        audioUrl,
+        readLocalFile: request.readBytes,
+    });
+    return found && 'bytes' in found ? found.bytes : null;
 };
 
 export interface StemRequest {

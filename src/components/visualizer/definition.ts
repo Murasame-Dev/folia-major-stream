@@ -203,6 +203,18 @@ export interface VisualizerRegistryEntry {
      * Modes without this field cannot be targeted by `registries.tunings`.
      */
     foliumTunables?: Readonly<Record<string, FoliumTunable>>;
+    /*
+     * Whether this mode, with these settings, draws beat FX - the beat clock (services/beatFx) runs,
+     * and the playing track's beats are analysed, only while the mode on screen says yes. A mode's
+     * own reader turns the shared `beatImpact` / `downbeatImpact` signals into its picture (Sonnet:
+     * sonnet/sonnetBeatFx.ts). Modes without it never start the clock.
+     */
+    wantsBeatClock?: (settings: VisualizerBeatClockSettings) => boolean;
+}
+
+/** The settings a mode's `wantsBeatClock` may read; widened as more modes draw beat FX. */
+export interface VisualizerBeatClockSettings {
+    sonnetTuning: SonnetTuning;
 }
 
 export interface FoliumTunable {

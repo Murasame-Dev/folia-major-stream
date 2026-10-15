@@ -41,6 +41,8 @@ export interface ShotView {
     basePivotX: number;
     basePivotY: number;
     haloLayer: import('pixi.js').Container;
+    /** The halo's alpha as built; 智能动感模式's downbeat flare lifts from it and returns to it. */
+    haloBaseAlpha: number;
     mgLayer: import('pixi.js').Container;
     mgBackgroundLayer?: import('pixi.js').Container;
     mgGeoLayer?: import('pixi.js').Container;
@@ -311,6 +313,7 @@ export const buildSonnetScene = (
             basePivotX: focusX,
             basePivotY: focusY,
             haloLayer,
+            haloBaseAlpha: haloLayer.alpha,
             mgLayer,
             mgBackgroundLayer,
             mgGeoLayer,

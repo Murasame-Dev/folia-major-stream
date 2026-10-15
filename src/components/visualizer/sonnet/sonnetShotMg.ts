@@ -30,7 +30,7 @@ import {
 } from './sonnetFixedGeoVariants';
 import { SONNET_THEMED_GEO_VARIANT_START } from './sonnetThemedShotMg';
 import { resolveSonnetShotMgBleed } from './sonnetShotMgViewport';
-import { resolveSonnetIconOnsetPop } from './sonnetBeatFx';
+import { resolveSonnetIconOnsetPop, resolveSonnetIconPopScale } from './sonnetBeatFx';
 import { isBeatFxReady } from '../../../services/beatFx/beatFxLive';
 
 // src/components/visualizer/sonnet/sonnetShotMg.ts
@@ -785,7 +785,9 @@ export const buildSonnetShotMg = (
 
         // 智能动感模式, once the beats are in: icons pop on lyric segment onsets instead of breathing
         // with the bands. Replaces the band mix below rather than stacking on it.
-        const onsetPop = smartBeatEnabled && isBeatFxReady() ? resolveSonnetIconOnsetPop(time, cues) : null;
+        const onsetPop = smartBeatEnabled && isBeatFxReady();
+        const onsetK = onsetPop ? resolveSonnetIconOnsetPop(time, cues) : 0;
+        const onsetScale = onsetPop ? resolveSonnetIconPopScale(onsetK) : 1;
         if (!onsetPop) {
             const audioEnergy = normalizeAudioLevel(audioBass) * 0.34
                 + normalizeAudioLevel(audioVocal) * 0.52
@@ -806,9 +808,9 @@ export const buildSonnetShotMg = (
             );
             const entryEased = 1 - Math.pow(1 - entryProgress, 3);
             const loopPulse = (Math.sin((time - startTime) * Math.PI * 0.7 + icon.phase) + 1) * 0.5;
-            const audioScale = onsetPop ? onsetPop.scale : 1 + smoothedIconAudio * 0.42;
+            const audioScale = onsetPop ? onsetScale : 1 + smoothedIconAudio * 0.42;
             const loopScale = 1 + loopPulse * 0.025;
-            const alphaLift = onsetPop ? 0.86 + onsetPop.k * 0.24 : 0.72 + smoothedIconAudio * 0.38;
+            const alphaLift = onsetPop ? 0.86 + onsetK * 0.24 : 0.72 + smoothedIconAudio * 0.38;
 
             icon.node.alpha = Math.min(
                 1,

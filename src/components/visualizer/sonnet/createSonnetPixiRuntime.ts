@@ -86,6 +86,13 @@ export interface SonnetRuntimeOptions {
     modulation?: Record<string, number>;
 }
 
+/** Tuning read only while drawing a frame; changing just these needs no scene rebuild. */
+const FRAME_READ_TUNING_KEYS: ReadonlySet<keyof SonnetTuning> = new Set(['beatIntensity', 'downbeatIntensity']);
+
+const onlyFrameReadTuningChanged = (previous: SonnetTuning, next: SonnetTuning): boolean =>
+    (Object.keys(next) as Array<keyof SonnetTuning>).every(key =>
+        FRAME_READ_TUNING_KEYS.has(key) || previous[key] === next[key]);
+
 export class SonnetPixiRuntime {
     private readonly sceneCache = new PixiSceneCache<SceneView>({
         count: () => this.options.program.paragraphs.length,
@@ -621,7 +628,14 @@ export class SonnetPixiRuntime {
      */
     setTuning(tuning: SonnetTuning) {
         if (this.destroyed || this.options.tuning === tuning) return;
+        const previous = this.options.tuning;
         this.options.tuning = tuning;
+        // The 轻拍 / 重拍 strengths are read per frame (sonnetBeatFx.ts) and shape nothing a scene is
+        // built from, so dragging their sliders must not rebuild every scene on every step.
+        if (onlyFrameReadTuningChanged(previous, tuning)) {
+            if (this.options.paused) this.renderOnce();
+            return;
+        }
         // Staged against the old tuning, so it can no longer be adopted.
         if (this.songSwap?.staged) {
             this.destroyScene(this.songSwap.staged.scene);

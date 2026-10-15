@@ -1,4 +1,4 @@
-// src/utils/beatFxClock.ts
+// src/services/beatFx/clock.ts
 // Pure beat clock for the beat FX (Sonnet 智能动感模式): walks a sorted beat/downbeat event list against the
 // heard playback time and produces two decaying impact envelopes. No React, no MotionValues - the
 // caller owns the frame loop and writes the envelopes wherever it needs them.
@@ -11,13 +11,12 @@ export interface BeatFxEvent {
     kind: BeatFxEventKind;
 }
 
-/** Envelope shape, based on the approved mockup (sonnet-beat/index.html). */
+/** Envelope shape, from the approved Sonnet mockup; both envelopes peak at 1. */
 // Beats decay in 160 ms (mockup: 300) so each one lands as a separate jump at ~160 BPM instead of
-// overlapping the next; full strength (mockup: 0.75) so the regular beat is clearly felt.
+// overlapping the next, and peak at full strength (mockup: 0.75) so the regular beat is clearly felt.
+// How strong that is on screen is each visualizer's setting (Sonnet: 轻拍 / 重拍强度), not the clock's.
 export const BEAT_FX_BEAT_DECAY_MS = 160;
 export const BEAT_FX_DOWNBEAT_DECAY_MS = 200;
-export const BEAT_FX_BEAT_STRENGTH = 1;
-export const BEAT_FX_DOWNBEAT_STRENGTH = 1;
 /** A jump in heard time larger than this (or any backwards step) is treated as a seek. */
 export const BEAT_FX_SEEK_THRESHOLD_SEC = 0.3;
 
@@ -112,8 +111,7 @@ export const stepBeatFxClock = (
         // How late this frame is relative to the event, so the envelope starts where it should.
         const lateMs = Math.max(0, heardTime - event.t) * 1000;
         const isDownbeat = event.kind === 'downbeat';
-        const strength = isDownbeat ? BEAT_FX_DOWNBEAT_STRENGTH : BEAT_FX_BEAT_STRENGTH;
-        state.beatImpact = Math.max(state.beatImpact, strength * Math.exp(-lateMs / BEAT_FX_BEAT_DECAY_MS * 2.3));
+        state.beatImpact = Math.max(state.beatImpact, Math.exp(-lateMs / BEAT_FX_BEAT_DECAY_MS * 2.3));
         state.rotationSign = -state.rotationSign;
         state.lastFiredT = event.t;
         if (isDownbeat) {

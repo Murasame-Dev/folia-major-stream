@@ -3,7 +3,7 @@ import { Check, Copy, Disc3, Download, ExternalLink, FolderOpen, Loader2, Search
 import ConfirmDialog from '../../shared/ConfirmDialog';
 import ThemedDialog from '../../shared/ThemedDialog';
 import { useTranslation } from 'react-i18next';
-import { refreshModelAvailability } from '../../../services/automix/modelAvailability';
+import { refreshModelAvailability } from '../../../services/analysis/modelAvailability';
 
 // src/components/modal/settings/AutomixModelsSection.tsx
 // The two analysis models: whether they are here, and the three ways to get them.

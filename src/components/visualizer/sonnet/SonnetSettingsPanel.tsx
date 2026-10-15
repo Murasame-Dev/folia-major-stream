@@ -33,7 +33,7 @@ const SonnetSettingsPanel: React.FC<VisualizerSettingsPanelProps> = ({
     const smartBeatAvailability = useSmartBeatAvailability();
     const smartBeatReason = smartBeatAvailability === 'ready'
         ? null
-        : t(`options.sonnetSmartBeat_${smartBeatAvailability}`);
+        : t(`options.beatFxUnavailable_${smartBeatAvailability}`);
 
     const visibilityControls: Array<{
         key: Extract<keyof SonnetTuning, 'showOnlyText' | 'showGuide' | 'showBackgroundMg' | 'showFixedGeo' | 'showGiantDecorativeText' | 'showBackgroundDecor' | 'enableTransitions'>;

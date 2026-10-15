@@ -5,7 +5,7 @@ import {
     modelsPresent,
     refreshModelAvailability,
     subscribeModelAvailability,
-} from '@/services/automix/modelAvailability';
+} from '@/services/analysis/modelAvailability';
 import { transitionCapabilities } from '@/services/automix/stems';
 
 // test/unit/automix/modelAvailability.test.ts

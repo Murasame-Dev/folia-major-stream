@@ -3,12 +3,12 @@ import { DEFAULT_SONNET_TUNING, type SonnetTuning } from '@/types';
 import { useVisualizerSettingsStore } from '@/stores/useVisualizerSettingsStore';
 import { compressConfig, decompressConfig } from '@/utils/appearanceCodec';
 import { beatImpact, downbeatImpact } from '@/stores/motionSignals';
-import { beginBeatFxTrack, setBeatFxEvents, stopBeatFx } from '@/services/beatFx/beatFxLive';
-import { isSmartBeatWanted } from '@/services/beatFx/beatFxConfig';
+import { beginBeatFxTrack, isBeatFxReady, setBeatFxEvents, stopBeatFx, tickBeatFx } from '@/services/beatFx/beatFxLive';
+import { visualizerWantsBeatClock } from '@/components/visualizer/registry';
 import {
     SONNET_BEAT_FX,
+    applySonnetBeatFxLayers,
     createSonnetBeatFxReader,
-    applySonnetHaloFlare,
     restoreSonnetBeatFxLayers,
 } from '@/components/visualizer/sonnet/sonnetBeatFx';
 
@@ -84,11 +84,41 @@ describe('Sonnet 智能动感模式 setting', () => {
 });
 
 describe('when the beat FX run', () => {
-    it('needs Sonnet on screen, the switch on and no static mode', () => {
-        expect(isSmartBeatWanted('sonnet', { smartBeatEnabled: true }, false)).toBe(true);
-        expect(isSmartBeatWanted('sonnet', { smartBeatEnabled: false }, false)).toBe(false);
-        expect(isSmartBeatWanted('tempera', { smartBeatEnabled: true }, false)).toBe(false);
-        expect(isSmartBeatWanted('sonnet', { smartBeatEnabled: true }, true)).toBe(false);
+    it('is asked of the mode on screen: Sonnet with 智能动感模式 on, and no other mode', () => {
+        expect(visualizerWantsBeatClock('sonnet', { sonnetTuning: tuning({ smartBeatEnabled: true }) })).toBe(true);
+        expect(visualizerWantsBeatClock('sonnet', { sonnetTuning: tuning() })).toBe(false);
+        expect(visualizerWantsBeatClock('tempera', { sonnetTuning: tuning({ smartBeatEnabled: true }) })).toBe(false);
+    });
+});
+
+describe('beat clock readiness across a track change', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        stopBeatFx();
+    });
+
+    it('holds the previous track ready while the next one loads, then drops if it has none', () => {
+        vi.useFakeTimers();
+        beginBeatFxTrack('a');
+        setBeatFxEvents('a', [{ t: 1, kind: 'beat' }], 'beat_this');
+        beginBeatFxTrack('b');
+        expect(isBeatFxReady()).toBe(true);
+        vi.advanceTimersByTime(2000);
+        expect(isBeatFxReady()).toBe(false);
+    });
+
+    it('does not hold when the previous track had no beats either', () => {
+        beginBeatFxTrack('a');
+        beginBeatFxTrack('b');
+        expect(isBeatFxReady()).toBe(false);
+    });
+
+    it('ends the hold the moment the next track answers', () => {
+        beginBeatFxTrack('a');
+        setBeatFxEvents('a', [{ t: 1, kind: 'beat' }], 'beat_this');
+        beginBeatFxTrack('b');
+        setBeatFxEvents('b', [], 'none');
+        expect(isBeatFxReady()).toBe(false);
     });
 });
 
@@ -131,14 +161,28 @@ describe('Sonnet beat FX frame', () => {
         expect(noBeat.flare).toBeCloseTo(2 * SONNET_BEAT_FX.flare);
     });
 
+    it('keeps the line flash at rest while nothing is heard', () => {
+        installBeats();
+        const treble = { get: () => 200 };
+        const bands = { treble } as unknown as Parameters<ReturnType<typeof createSonnetBeatFxReader>>[0];
+        const read = createSonnetBeatFxReader();
+        tickBeatFx(null, null);
+        expect(read(bands, tuning({ smartBeatEnabled: true }))!.lineLift).toBe(0);
+    });
+
     it('puts the line and halo layers back to their built alpha', () => {
-        const lines = [{ alpha: 0.8 }, undefined, { alpha: 0.9 }];
-        const halo = { alpha: 0.35 };
-        applySonnetHaloFlare(halo, 1);
-        expect(halo.alpha).toBe(1);
-        restoreSonnetBeatFxLayers(lines, halo);
-        expect(lines[0]!.alpha).toBe(1);
-        expect(lines[2]!.alpha).toBe(1);
-        expect(halo.alpha).toBe(0.35);
+        const view = {
+            haloLayer: { alpha: 0.35 },
+            haloBaseAlpha: 0.35,
+            mgGeoLayer: { alpha: 1 },
+            mgFixedGeoLayer: { alpha: 1 },
+        };
+        applySonnetBeatFxLayers(view, { zoom: 1, rotation: 0, tear: 0, tearSeed: 0, flare: 1, lineLift: 0 });
+        expect(view.haloLayer.alpha).toBe(1);
+        expect(view.mgGeoLayer.alpha).toBe(SONNET_BEAT_FX.lineBaseAlpha);
+        restoreSonnetBeatFxLayers(view);
+        expect(view.mgGeoLayer.alpha).toBe(1);
+        expect(view.mgFixedGeoLayer.alpha).toBe(1);
+        expect(view.haloLayer.alpha).toBe(0.35);
     });
 });

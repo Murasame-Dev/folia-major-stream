@@ -1,5 +1,5 @@
 /// <reference types="@webgpu/types" />
-import { BeatThisWgsl, type BeatThisWgslManifest } from '../services/automix/beatThisWgsl/runtime';
+import { BeatThisWgsl, type BeatThisWgslManifest } from '../services/analysis/beatThisWgsl/runtime';
 
 // src/workers/beatThisGpu.worker.ts
 // Beat This! on the renderer's own GPU, beside the visualizer, from a thread that does not paint.

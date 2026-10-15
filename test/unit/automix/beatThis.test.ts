@@ -9,7 +9,7 @@ import {
     BEAT_THIS_SAMPLE_RATE,
     MODEL_CHUNK_FRAMES,
     type ChunkPrediction,
-} from '@/services/automix/beatThis';
+} from '@/services/analysis/beatThis';
 
 // test/unit/automix/beatThis.test.ts
 // The parts of the Beat This! pass that do not need the model.

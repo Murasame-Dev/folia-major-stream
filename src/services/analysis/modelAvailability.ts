@@ -1,4 +1,4 @@
-// src/services/automix/modelAvailability.ts
+// src/services/analysis/modelAvailability.ts
 // Which model weights are actually on disk, as a value the rest of the app can read synchronously.
 //
 // Every capability question in automix used to be answered with "am I running in Electron", which

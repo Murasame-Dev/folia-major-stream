@@ -1,4 +1,4 @@
-// src/services/automix/beatThisGpu.ts
+// src/services/analysis/beatThisGpu.ts
 // Beat This! on WebGPU in this renderer - the process that also draws the visualizer - with the CPU
 // path in the analysis worker (electron/analysis/worker.cjs, MNN) as automix's fallback for everything
 // this cannot take.
@@ -125,6 +125,24 @@ const start = async (): Promise<boolean> => {
     }
     console.log(`[beat-this-gpu] loaded on ${reply.result}`);
     return true;
+};
+
+let adapterProbe: Promise<boolean> | null = null;
+
+/**
+ * Whether this renderer can run the WebGPU path, as far as can be told without loading the model:
+ * not already failed this session, and an adapter on offer. Asked by settings that depend on it
+ * (Sonnet's 智能动感模式) so they can say so instead of sitting on and inert; `navigator.gpu` alone
+ * exists on machines whose GPU is blocklisted and hands out no adapter. The adapter is not kept.
+ */
+export const probeBeatThisGpu = (): Promise<boolean> => {
+    if (unsupported) return Promise.resolve(false);
+    const gpu = typeof navigator !== 'undefined'
+        ? (navigator as Navigator & { gpu?: { requestAdapter: () => Promise<unknown> } }).gpu
+        : undefined;
+    if (!gpu) return Promise.resolve(false);
+    adapterProbe ??= gpu.requestAdapter().then(adapter => Boolean(adapter), () => false);
+    return adapterProbe.then(found => found && !unsupported);
 };
 
 /**

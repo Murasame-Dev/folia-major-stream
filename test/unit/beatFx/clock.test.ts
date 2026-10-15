@@ -3,10 +3,10 @@ import {
     createBeatFxClockState,
     mergeBeatFxEvents,
     stepBeatFxClock,
-} from '../../../src/utils/beatFxClock';
+} from '../../../src/services/beatFx/clock';
 import { resolveSonnetBeatFxFrame, resolveSonnetIconOnsetPop } from '../../../src/components/visualizer/sonnet/sonnetBeatFx';
 
-// test/unit/visualizer/beatFxClock.test.ts
+// test/unit/beatFx/clock.test.ts
 
 const FRAME = 1 / 60;
 
@@ -84,8 +84,8 @@ describe('sonnetBeatFx envelopes', () => {
 
     it('pops icons on the latest lyric cue only', () => {
         const cues = [0, 1].map(at => ({ at, duration: 0.3, kind: 'enter' as const, segmentStart: 0, segmentEnd: 1 }));
-        expect(resolveSonnetIconOnsetPop(1, cues).k).toBeCloseTo(1);
-        expect(resolveSonnetIconOnsetPop(1.3, cues).k).toBeLessThan(0.11);
-        expect(resolveSonnetIconOnsetPop(-1, cues).k).toBe(0);
+        expect(resolveSonnetIconOnsetPop(1, cues)).toBeCloseTo(1);
+        expect(resolveSonnetIconOnsetPop(1.3, cues)).toBeLessThan(0.11);
+        expect(resolveSonnetIconOnsetPop(-1, cues)).toBe(0);
     });
 });

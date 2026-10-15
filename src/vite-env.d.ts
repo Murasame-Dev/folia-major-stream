@@ -773,7 +773,7 @@ declare global {
       /** The WebGPU export of Beat This! (fp16 tensors + manifest, one file), read by the main process. Null when absent. */
       getBeatThisGpuWeights?: () => Promise<{
         weights: Uint8Array<ArrayBuffer>;
-        manifest: import('./services/automix/beatThisWgsl/runtime').BeatThisWgslManifest;
+        manifest: import('./services/analysis/beatThisWgsl/runtime').BeatThisWgslManifest;
       } | null>;
       /**
        * Automix switched on or off. While on, the analysis worker keeps htdemucs loaded across tracks;

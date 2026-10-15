@@ -1,9 +1,9 @@
 import { runBeatThisGpu } from './beatThisGpu';
 import { modelCanRun, noteModelFailed } from './modelAvailability';
-import { fft } from './signalAnalysis';
-import { YIELD_BUDGET_MS, yieldToUi } from './uiYield';
+import { fft } from '../automix/signalAnalysis';
+import { YIELD_BUDGET_MS, yieldToUi } from '../automix/uiYield';
 
-// src/services/automix/beatThis.ts
+// src/services/analysis/beatThis.ts
 // The two halves of the Beat This! contract that are plain arithmetic: the mel spectrogram it
 // expects on its input, and the peak picking that turns its two logit tracks into times.
 //

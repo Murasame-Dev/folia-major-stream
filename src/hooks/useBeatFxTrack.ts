@@ -2,42 +2,50 @@ import { useEffect } from 'react';
 import { selectDisplaySong, usePlaybackStore } from '../stores/usePlaybackStore';
 import { useThemeSettingsStore } from '../stores/useThemeSettingsStore';
 import { useVisualizerSettingsStore } from '../stores/useVisualizerSettingsStore';
-import { isSmartBeatWanted } from '../services/beatFx/beatFxConfig';
+import { visualizerWantsBeatClock } from '../components/visualizer/registry';
 import { beginBeatFxTrack, setBeatFxEvents, stopBeatFx } from '../services/beatFx/beatFxLive';
 import { loadBeatFxTrackBeats } from '../services/beatFx/beatFxSource';
 import { getPlaybackAnalysisKey } from '../services/playbackRecovery/representationRegistry';
 
 // src/hooks/useBeatFxTrack.ts
 // Loads the beat list of the on-screen track into the live beat clock whenever the track changes,
-// while Sonnet's 智能动感模式 is on. Only the track identity and the switch enter React; the per-frame
-// clock lives in services/beatFx/beatFxLive.
+// while the visualizer on screen draws beat FX (its registry entry's `wantsBeatClock` - Sonnet's
+// 智能动感模式) and static mode is off. Only the track identity and that answer enter React; the
+// per-frame clock lives in services/beatFx/beatFxLive.
 
 /** Whether the beat clock should be stepped; the caller's frame loop reads it. */
 export function useBeatFxTrack(): boolean {
     const staticMode = useThemeSettingsStore(state => state.staticMode);
-    const wanted = useVisualizerSettingsStore(state => isSmartBeatWanted(state.visualizerMode, state.sonnetTuning, staticMode));
+    const wanted = useVisualizerSettingsStore(state => visualizerWantsBeatClock(state.visualizerMode, state))
+        && !staticMode;
     const song = usePlaybackStore(selectDisplaySong);
-    const key = wanted && song ? getPlaybackAnalysisKey(song) : null;
+    // Only the identity, to key the effect; the load resolves the key it reads bytes for itself.
+    const identity = wanted && song ? getPlaybackAnalysisKey(song) : null;
 
     useEffect(() => {
         if (!wanted) {
             stopBeatFx();
             return;
         }
+        if (!identity || !song) {
+            beginBeatFxTrack(null);
+            return;
+        }
+        const { key, beats } = loadBeatFxTrackBeats(song);
         beginBeatFxTrack(key);
-        if (!key || !song) return;
         let cancelled = false;
-        void loadBeatFxTrackBeats(song).then((result) => {
+        void beats.then((result) => {
             if (cancelled) return;
             setBeatFxEvents(key, result.events, result.source, result.note);
-            console.info(`[BeatFx] ${result.events.length} events from ${result.source}${result.note ? ` (${result.note})` : ''}`);
+            // Only the case that needs explaining; a track with beats shows them.
+            if (result.source === 'none') console.info(`[BeatFx] no beats for this track: ${result.note}`);
         });
         return () => {
             cancelled = true;
         };
         // Keyed on the track identity and the switch only; the song object changes for unrelated reasons.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [key, wanted]);
+    }, [identity, wanted]);
 
     return wanted;
 }

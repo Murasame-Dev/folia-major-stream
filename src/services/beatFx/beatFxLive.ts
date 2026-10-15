@@ -1,12 +1,14 @@
 import { beatImpact, downbeatImpact } from '../../stores/motionSignals';
-import { createBeatFxClockState, stepBeatFxClock, type BeatFxEvent } from '../../utils/beatFxClock';
-import { getBeatFxOffsetSec } from './beatFxConfig';
+import { createBeatFxClockState, stepBeatFxClock, type BeatFxEvent } from './clock';
 import type { BeatFxSourceKind } from './beatFxSource';
 
 // src/services/beatFx/beatFxLive.ts
 // The one live beat clock: fed the current track's beat list, stepped once per frame from the
 // existing playback RAF loop, and written into the `beatImpact` / `downbeatImpact` MotionValues.
 // No React state anywhere on this path.
+//
+// Diagnostics (`window.__foliaBeatFx`: beats fired, source, latency, the two envelopes) exist in a
+// dev build, or in any build with localStorage['folia.dev.beatFxDebug'] = '1' at startup.
 
 interface BeatFxDebug {
     beats: number;
@@ -18,7 +20,6 @@ interface BeatFxDebug {
     trackKey: string | null;
     eventCount: number;
     latencyMs: number;
-    offsetMs: number;
     beatImpact: number;
     downbeatImpact: number;
 }
@@ -29,55 +30,88 @@ declare global {
     }
 }
 
+/**
+ * How long a track change keeps the previous track's "ready" while the new one's beats load.
+ *
+ * Without it every change - a skip, an automix handover, exactly the moments meant to be seamless -
+ * dropped the visualizer to its original frame for the few frames a stored list takes to read, and
+ * jumped back. Held, the frame stays a beat FX frame whose envelopes simply decay to rest; only a
+ * track that really has no beats after this long drops back, once.
+ */
+const READY_HOLD_MS = 1500;
+
+const readDebugFlag = (): boolean => {
+    try {
+        return typeof localStorage !== 'undefined' && localStorage.getItem('folia.dev.beatFxDebug') === '1';
+    } catch {
+        return false;
+    }
+};
+
+const debug: BeatFxDebug | null = (import.meta.env.DEV || readDebugFlag())
+    ? {
+        beats: 0,
+        downbeats: 0,
+        lastT: null,
+        heardT: null,
+        source: 'none',
+        note: null,
+        trackKey: null,
+        eventCount: 0,
+        latencyMs: 0,
+        beatImpact: 0,
+        downbeatImpact: 0,
+    }
+    : null;
+if (debug && typeof window !== 'undefined') window.__foliaBeatFx = debug;
+
 const state = createBeatFxClockState();
 let trackKey: string | null = null;
 let lastStepAt: number | null = null;
-
-const debug: BeatFxDebug = {
-    beats: 0,
-    downbeats: 0,
-    lastT: null,
-    heardT: null,
-    source: 'none',
-    note: null,
-    trackKey: null,
-    eventCount: 0,
-    latencyMs: 0,
-    offsetMs: getBeatFxOffsetSec() * 1000,
-    beatImpact: 0,
-    downbeatImpact: 0,
-};
-if (typeof window !== 'undefined') window.__foliaBeatFx = debug;
+/** `performance.now()` until which a track change counts as ready; see READY_HOLD_MS. */
+let holdUntil = 0;
+/** Whether the last step had a deck being heard; false while paused or stopped. */
+let hearing = false;
 
 /** Switches the clock to a new track; events arrive later via `setBeatFxEvents`. */
 export const beginBeatFxTrack = (key: string | null) => {
+    holdUntil = key && state.events.length > 0 ? performance.now() + READY_HOLD_MS : 0;
     trackKey = key;
     state.events = [];
     state.cursor = 0;
     state.lastTime = null;
-    debug.trackKey = key;
-    debug.source = key ? 'loading' : 'none';
-    debug.note = null;
-    debug.eventCount = 0;
+    if (debug) {
+        debug.trackKey = key;
+        debug.source = key ? 'loading' : 'none';
+        debug.note = null;
+        debug.eventCount = 0;
+    }
 };
 
 /** Installs the beat list for `key`; ignored if the track changed while it was loading. */
 export const setBeatFxEvents = (key: string, events: BeatFxEvent[], source: BeatFxSourceKind, note?: string) => {
     if (key !== trackKey) return;
     state.events = events;
+    holdUntil = 0;
     // Resync on the next step rather than firing everything before the current position.
     state.lastTime = null;
-    debug.source = source;
-    debug.note = note ?? null;
-    debug.eventCount = events.length;
+    if (debug) {
+        debug.source = source;
+        debug.note = note ?? null;
+        debug.eventCount = events.length;
+    }
 };
 
 /**
- * Whether the playing track's beat list is installed. Until it is - the analysis is running, the
- * track is not cached, the model is not downloaded, the GPU could not take it - Sonnet draws its
+ * Whether the playing track's beat list is installed - or a track change is still inside its hold.
+ * Until then (analysing, not cached, no model, a GPU that could not take it) a visualizer draws its
  * original frame rather than a beat FX frame with nothing driving it.
  */
-export const isBeatFxReady = (): boolean => trackKey !== null && state.events.length > 0;
+export const isBeatFxReady = (): boolean =>
+    trackKey !== null && (state.events.length > 0 || (holdUntil > 0 && performance.now() < holdUntil));
+
+/** Whether a deck was being heard at the last step; continuous effects rest while it is not. */
+export const isBeatFxHearing = (): boolean => hearing;
 
 /** Stops the clock and zeroes both envelopes; called when the FX are switched off. */
 export const stopBeatFx = () => {
@@ -87,6 +121,7 @@ export const stopBeatFx = () => {
     beatImpact.set(0);
     downbeatImpact.set(0);
     lastStepAt = null;
+    hearing = false;
 };
 
 /** Alternating ±1 for the camera tilt; flips on every fired beat. */
@@ -105,19 +140,22 @@ export const tickBeatFx = (audioElement: HTMLMediaElement | null, context: BaseA
     if (audioElement && !audioElement.paused && !audioElement.ended) {
         const live = context as (BaseAudioContext & { outputLatency?: number; baseLatency?: number }) | null | undefined;
         const latency = (Number(live?.outputLatency) || 0) + (Number(live?.baseLatency) || 0);
-        debug.latencyMs = latency * 1000;
         // What the listener hears lags what the element has decoded by the output latency.
-        heardTime = audioElement.currentTime - latency - getBeatFxOffsetSec();
+        heardTime = audioElement.currentTime - latency;
+        if (debug) debug.latencyMs = latency * 1000;
     }
+    hearing = heardTime !== null;
 
     stepBeatFxClock(state, heardTime, dtSec);
     beatImpact.set(state.beatImpact);
     downbeatImpact.set(state.downbeatImpact);
 
-    debug.beats = state.firedBeats;
-    debug.downbeats = state.firedDownbeats;
-    debug.lastT = state.lastFiredT;
-    debug.heardT = heardTime;
-    debug.beatImpact = state.beatImpact;
-    debug.downbeatImpact = state.downbeatImpact;
+    if (debug) {
+        debug.beats = state.firedBeats;
+        debug.downbeats = state.firedDownbeats;
+        debug.lastT = state.lastFiredT;
+        debug.heardT = heardTime;
+        debug.beatImpact = state.beatImpact;
+        debug.downbeatImpact = state.downbeatImpact;
+    }
 };

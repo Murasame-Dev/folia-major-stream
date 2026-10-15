@@ -17,12 +17,7 @@ import { hashSonnetSeed } from './sonnetRandom';
 import type { ShotView } from './sonnetSceneBuilder';
 import { isSonnetEmphasisRole } from './sonnetTypographyLayout';
 import { resolveSonnetSegmentCameraFocus } from './sonnetCameraTracking';
-import {
-    applySonnetHaloFlare,
-    resolveSonnetLineFlashAlpha,
-    restoreSonnetBeatFxLayers,
-    type SonnetBeatFxFrame,
-} from './sonnetBeatFx';
+import { applySonnetBeatFxLayers, restoreSonnetBeatFxLayers, type SonnetBeatFxFrame } from './sonnetBeatFx';
 
 // src/components/visualizer/sonnet/sonnetShotFrame.ts
 // 单个 shot 的逐帧姿态：镜头运动、间隙漂移与呼吸、逐段落焦点跟踪、MG / 引导线 / 开放画框时间，
@@ -176,15 +171,11 @@ export const updateSonnetShot = (
         // The frame overlay is a stage sibling of the scenes, so it never moves with this.
         view.container.scale.set(view.container.scale.x * beatFx.zoom);
         view.container.rotation += beatFx.rotation;
-        const lineAlpha = resolveSonnetLineFlashAlpha(beatFx.lineLift);
-        if (view.mgGeoLayer) view.mgGeoLayer.alpha = lineAlpha;
-        if (view.mgBackgroundLayer) view.mgBackgroundLayer.alpha = lineAlpha;
-        if (view.mgFixedGeoLayer) view.mgFixedGeoLayer.alpha = lineAlpha;
-        applySonnetHaloFlare(view.haloLayer, beatFx.flare);
+        applySonnetBeatFxLayers(view, beatFx);
     } else if (tuning.smartBeatEnabled) {
         // On, but no beats for this track (yet): the original frame, including what an earlier
         // beat FX frame - the previous track's - left on these layers.
-        restoreSonnetBeatFxLayers([view.mgGeoLayer, view.mgBackgroundLayer, view.mgFixedGeoLayer], view.haloLayer);
+        restoreSonnetBeatFxLayers(view);
     }
 
     if (view.mgParticleLayer) {
