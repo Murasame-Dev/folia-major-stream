@@ -559,15 +559,6 @@ export interface SonnetTuning {
   postProcessLensDistortion: number;
   /** Radial chromatic dispersion amount, 0..1. */
   postProcessLensDispersion: number;
-  /**
-   * 智能动感模式: beat_this' beats drive the picture instead of the FFT bands (src/services/beatFx).
-   * Off leaves Sonnet exactly as it was.
-   */
-  smartBeatEnabled: boolean;
-  /** 轻拍 strength, 0..2: every beat's camera punch and tilt. 0 turns that layer off. */
-  beatIntensity: number;
-  /** 重拍 strength, 0..2: the downbeat's extra punch, tear and glow flare. 0 turns that layer off. */
-  downbeatIntensity: number;
 }
 
 export const DEFAULT_SONNET_TUNING: SonnetTuning = {
@@ -591,7 +582,23 @@ export const DEFAULT_SONNET_TUNING: SonnetTuning = {
   postProcessVignette: 0.85,
   postProcessLensDistortion: 0.3,
   postProcessLensDispersion: 0.6,
-  smartBeatEnabled: false,
+};
+
+/**
+ * 智能动感模式, one switch for every visualizer and background that draws beat FX: beat_this' beats
+ * drive the picture instead of the FFT bands (src/services/beatFx). Which ones do is declared on their
+ * registry entries (`drawsBeatFx`). Off leaves every picture exactly as it was.
+ */
+export interface SmartBeatSettings {
+  enabled: boolean;
+  /** 轻拍 strength, 0..2: scales every beat's envelope. 0 turns that layer off. */
+  beatIntensity: number;
+  /** 重拍 strength, 0..2: scales the downbeat's envelope. 0 turns that layer off. */
+  downbeatIntensity: number;
+}
+
+export const DEFAULT_SMART_BEAT_SETTINGS: SmartBeatSettings = {
+  enabled: false,
   beatIntensity: 1,
   downbeatIntensity: 1,
 };

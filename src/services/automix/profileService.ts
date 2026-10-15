@@ -288,8 +288,8 @@ export const ensureTrackProfile = async (request: ProfileRequest): Promise<void>
             const runModel = request.wantGrid && canRunBeatThis();
             // Automix analyses minutes ahead of the transition, so the CPU may stand in for the GPU.
             //
-            // A whole track goes through analysis/beatGrid.ts: read back if Sonnet's 智能动感模式 (or an
-            // earlier run) already has it, joined if that is running it right now, kept for it otherwise.
+            // A whole track goes through analysis/beatGrid.ts: read back if an earlier
+            // run already has it, joined if one is running it right now, kept for the next one otherwise.
             // A head-only read neither uses nor stores one there: its profile describes the head, and so
             // must its grid.
             const mid = channels?.mid;

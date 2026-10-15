@@ -17,7 +17,7 @@ import {
 import { loadPixi } from '../loadPixi';
 import { PixiSceneCache } from '../pixiSceneCache';
 import { sonnetDebugState } from './sonnetDebug';
-import { createSonnetBeatFxReader, onlyFrameReadTuningChanged } from './sonnetBeatFx';
+import { createSonnetBeatFxReader } from './sonnetBeatFx';
 import { readSonnetModulation, type SonnetShotFrameContext, updateSonnetShot } from './sonnetShotFrame';
 import { findSonnetActiveShotIndex, resolveSonnetSceneTransitionFrame } from './sonnetSceneFrame';
 import { drawSonnetFrameOverlay } from './sonnetFrameOverlay';
@@ -71,6 +71,8 @@ export interface SonnetRuntimeOptions {
     program: SonnetProgram;
     theme: Theme;
     tuning: SonnetTuning;
+    /** 智能动感模式 (SmartBeatSettings.enabled); its strengths reach the frame through the beat clock. */
+    smartBeatEnabled: boolean;
     currentTime: MotionValue<number>;
     audioPower?: MotionValue<number>;
     audioBands?: AudioBands;
@@ -301,6 +303,7 @@ export class SonnetPixiRuntime {
             host: this.options.host,
             theme: song.theme,
             tuning: this.options.tuning,
+            smartBeatEnabled: this.options.smartBeatEnabled,
             lyricsFontScale: this.options.lyricsFontScale,
             staticMode: this.options.staticMode,
             transparentBackground: this.options.transparentBackground,
@@ -356,9 +359,10 @@ export class SonnetPixiRuntime {
         );
         const hasCredits = this.creditsContainer.children.length > 0;
         // Read once per frame, before any shot, so every consumer sees the same envelopes.
-        const beatFx = this.options.staticMode ? null : this.readBeatFx(this.options.audioBands, this.options.tuning);
+        const beatFx = this.options.staticMode ? null : this.readBeatFx(this.options.audioBands, this.options.smartBeatEnabled);
         const shotFrameContext: SonnetShotFrameContext = {
             tuning: this.options.tuning,
+            smartBeatEnabled: this.options.smartBeatEnabled,
             theme: this.options.theme,
             audioBands: this.options.audioBands,
             audioPower: this.options.audioPower,
@@ -621,15 +625,24 @@ export class SonnetPixiRuntime {
      */
     setTuning(tuning: SonnetTuning) {
         if (this.destroyed || this.options.tuning === tuning) return;
-        const previous = this.options.tuning;
         this.options.tuning = tuning;
-        // The 轻拍 / 重拍 strengths are read per frame (sonnetBeatFx.ts) and shape nothing a scene is
-        // built from, so dragging their sliders must not rebuild every scene on every step.
-        if (onlyFrameReadTuningChanged(previous, tuning)) {
-            if (this.options.paused) this.renderOnce();
-            return;
-        }
-        // Staged against the old tuning, so it can no longer be adopted.
+        this.rebuildScenes();
+    }
+
+    /**
+     * Switches 智能动感模式. Scenes are built with or without its MG onset pop and tear filter, so they
+     * are rebuilt like a tuning change; the 轻拍 / 重拍 strengths never come here, the beat clock
+     * applies them to the signals every frame.
+     */
+    setSmartBeatEnabled(enabled: boolean) {
+        if (this.destroyed || this.options.smartBeatEnabled === enabled) return;
+        this.options.smartBeatEnabled = enabled;
+        this.rebuildScenes();
+    }
+
+    /** Rebuilds every scene against the current options on the live context. */
+    private rebuildScenes() {
+        // Staged against the old options, so it can no longer be adopted.
         if (this.songSwap?.staged) {
             this.destroyScene(this.songSwap.staged.scene);
             this.songSwap.staged = null;

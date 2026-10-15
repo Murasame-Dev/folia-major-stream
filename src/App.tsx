@@ -1139,7 +1139,7 @@ export default function App() {
         const local = localSongs.find(candidate => candidate.id === song.localRef.songId);
         return getLocalSongArrayBuffer((local ?? song) as unknown as LocalSong);
     }, [localSongs]);
-    // The same reader for every analyser (analysis/trackAudio.ts): Sonnet's 智能动感模式 and automix's
+    // The same reader for every analyser (analysis/trackAudio.ts): 智能动感模式 and automix's
     // profile read a local track that has no URL in hand through it too.
     useEffect(() => {
         registerLocalTrackFileReader(getLocalStemBytes);

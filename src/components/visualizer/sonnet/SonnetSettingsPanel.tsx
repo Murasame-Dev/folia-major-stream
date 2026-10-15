@@ -4,7 +4,6 @@ import { colorWithAlpha } from '../colorMix';
 import type { VisualizerSettingsPanelProps } from '../definition';
 import VisualizerPresetGroup, { type VisualizerPresetOption } from '../VisualizerPresetGroup';
 import { SonnetRangeControl, SonnetSettingsSection } from './SonnetSettingsControls';
-import { useSmartBeatAvailability } from '../../../hooks/useSmartBeatAvailability';
 
 // src/components/visualizer/sonnet/SonnetSettingsPanel.tsx
 // Keeps Sonnet's tuning controls adjacent to the mode implementation.
@@ -29,11 +28,6 @@ const SonnetSettingsPanel: React.FC<VisualizerSettingsPanelProps> = ({
         { value: 'frame', label: t('options.sonnetOuterFrameFrame') },
         { value: 'full', label: t('options.sonnetOuterFrameFull') },
     ]), [t]);
-
-    const smartBeatAvailability = useSmartBeatAvailability(sonnetTuning.smartBeatEnabled);
-    const smartBeatReason = smartBeatAvailability === 'ready'
-        ? null
-        : t(`options.beatFxUnavailable_${smartBeatAvailability}`);
 
     const visibilityControls: Array<{
         key: Extract<keyof SonnetTuning, 'showOnlyText' | 'showGuide' | 'showBackgroundMg' | 'showFixedGeo' | 'showGiantDecorativeText' | 'showBackgroundDecor' | 'enableTransitions'>;
@@ -108,45 +102,6 @@ const SonnetSettingsPanel: React.FC<VisualizerSettingsPanelProps> = ({
                         onPointerUp={onSliderCommit}
                     />
                 ))}
-            </SonnetSettingsSection>
-
-            <SonnetSettingsSection title={t('options.sonnetSmartBeatSection')}>
-                <VisualizerPresetGroup
-                    label={t('options.sonnetSmartBeatEnabled')}
-                    value={sonnetTuning.smartBeatEnabled}
-                    options={booleanOptions}
-                    onChange={smartBeatEnabled => onSonnetTuningChange?.({ smartBeatEnabled })}
-                    isDaylight={isDaylight}
-                    theme={theme}
-                />
-                <p className="text-xs leading-relaxed opacity-60" style={{ color: 'var(--text-secondary)' }}>
-                    {t('options.sonnetSmartBeatDesc')}
-                </p>
-                {smartBeatReason && (
-                    <p className="text-xs leading-relaxed" style={{ color: 'var(--text-primary)' }}>
-                        {smartBeatReason}
-                    </p>
-                )}
-                {sonnetTuning.smartBeatEnabled && (
-                    <>
-                        <SonnetRangeControl
-                            label={t('options.sonnetBeatIntensity')}
-                            value={sonnetTuning.beatIntensity}
-                            rangeInputClass={rangeInputClass}
-                            onChange={beatIntensity => onSonnetTuningChange?.({ beatIntensity })}
-                            onPointerDown={onSliderPointerDown}
-                            onPointerUp={onSliderCommit}
-                        />
-                        <SonnetRangeControl
-                            label={t('options.sonnetDownbeatIntensity')}
-                            value={sonnetTuning.downbeatIntensity}
-                            rangeInputClass={rangeInputClass}
-                            onChange={downbeatIntensity => onSonnetTuningChange?.({ downbeatIntensity })}
-                            onPointerDown={onSliderPointerDown}
-                            onPointerUp={onSliderCommit}
-                        />
-                    </>
-                )}
             </SonnetSettingsSection>
 
             <SonnetSettingsSection title={t('options.sonnetPostProcessSection')}>

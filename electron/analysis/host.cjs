@@ -174,7 +174,7 @@ const createAnalysisHost = ({ app, ipcMain, getModelsDirs, getBundledModelsDir, 
      * final0 file is also the worker's CPU fallback; its tensors and manifest are one file
      * (packedWeights.cjs), split here.
      *
-     * The channel keeps its automix- name: Sonnet's beat FX ask it for the bundled small0 too.
+     * The channel keeps its automix- name: the beat FX (智能动感模式) ask it for the bundled small0 too.
      */
     ipcMain.handle('automix-beat-this-gpu-weights', async (_event, model) => {
         // final0 (automix's download) unless the bundled small0 is asked for by name; nothing else is

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { probeBeatThisGpu } from '../services/analysis/beatThisGpu';
 
 // src/hooks/useSmartBeatAvailability.ts
-// Whether beat FX (Sonnet's 智能动感模式, and any mode that adds them) can do anything on this
+// Whether beat FX (智能动感模式, in every mode and background that draws them) can do anything on this
 // install, for a setting to say so next to its switch. The switch itself stays usable either way - it
 // is a preference - but a switch that is on and silently inert is the failure this is here to prevent.
 //

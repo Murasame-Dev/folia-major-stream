@@ -26,6 +26,8 @@ import { applySonnetBeatFxLayers, restoreSonnetBeatFxLayers, type SonnetBeatFxFr
 /** What a shot frame reads besides the view and the clock; all of it is read fresh every frame. */
 export interface SonnetShotFrameContext {
     tuning: SonnetTuning;
+    /** 智能动感模式 (SmartBeatSettings.enabled), whether or not this track's beats are in yet. */
+    smartBeatEnabled: boolean;
     theme: Theme;
     audioBands?: AudioBands;
     audioPower?: MotionValue<number>;
@@ -76,7 +78,7 @@ export const updateSonnetShot = (
     width: number,
     height: number,
     shakeIntensity: number,
-    { tuning, theme, audioBands, audioPower: audioPowerValue, mod, beatFx }: SonnetShotFrameContext,
+    { tuning, smartBeatEnabled, theme, audioBands, audioPower: audioPowerValue, mod, beatFx }: SonnetShotFrameContext,
 ) => {
     const progress = resolveShotProgress(view.shot, time);
     const motion = tuning.typographyMotion * resolveSonnetAnimationScale(theme) * mod('motionScale');
@@ -172,7 +174,7 @@ export const updateSonnetShot = (
         view.container.scale.set(view.container.scale.x * beatFx.zoom);
         view.container.rotation += beatFx.rotation;
         applySonnetBeatFxLayers(view, beatFx);
-    } else if (tuning.smartBeatEnabled) {
+    } else if (smartBeatEnabled) {
         // On, but no beats for this track (yet): the original frame, including what an earlier
         // beat FX frame - the previous track's - left on these layers.
         restoreSonnetBeatFxLayers(view);

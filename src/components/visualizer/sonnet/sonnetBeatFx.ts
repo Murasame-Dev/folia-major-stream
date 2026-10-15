@@ -1,10 +1,10 @@
-import type { AudioBands, SonnetTuning } from '../../../types';
+import type { AudioBands } from '../../../types';
 import { beatImpact, downbeatImpact } from '../../../stores/motionSignals';
 import { getBeatFxRotationSign, isBeatFxHearing, isBeatFxReady } from '../../../services/beatFx/beatFxLive';
 import type { SonnetAnimationCue } from './types';
 
 // src/components/visualizer/sonnet/sonnetBeatFx.ts
-// Sonnet's 智能动感模式 (`SonnetTuning.smartBeatEnabled`). Pure envelope math plus a per-runtime frame
+// Sonnet's share of 智能动感模式 (`SmartBeatSettings`). Pure envelope math plus a per-runtime frame
 // reader; each effect follows its own signal:
 //   camera punch  <- beatImpact      (zoom + alternating tilt, layered on the shot camera)
 //   mono tear     <- downbeatImpact  (shares the transition glitch filter, combined with max)
@@ -14,12 +14,13 @@ import type { SonnetAnimationCue } from './types';
 // Constants are the ones approved on the live picture (a 159 BPM track); the mockup they started from
 // is not in the repo. The 轻拍 strength
 // (`beatIntensity`) scales the first line, the 重拍 strength (`downbeatIntensity`) the next two and the
-// downbeat's share of the zoom; icon pop and line flash are not beats and follow the switch only.
+// downbeat's share of the zoom - already applied to the two signals by the beat clock (beatFxLive's
+// `setBeatFxIntensities`); icon pop and line flash are not beats and follow the switch only.
 //
 // Until the playing track's beat list is installed (beatFxLive's `isBeatFxReady`) the reader answers
 // null and Sonnet draws its original frame - no half-on state while the analysis runs, or on a machine
 // it cannot run on. Which modes start the beat clock at all is their registry entry's
-// `wantsBeatClock`; another mode adds beat FX with its own reader over the same two signals.
+// `drawsBeatFx`; another mode adds beat FX with its own reader over the same two signals.
 
 export const SONNET_BEAT_FX = {
     /** Mockup used 3% at 118 BPM; at ~160 BPM that read as drift, so beats punch harder and shorter. */
@@ -83,16 +84,8 @@ export const resolveSonnetBeatFxFrame = (
 };
 
 /** Whether this frame is a beat FX frame: 智能动感模式 on and the track's beats installed. */
-export const isSonnetBeatFxActive = (tuning: Pick<SonnetTuning, 'smartBeatEnabled'>): boolean =>
-    tuning.smartBeatEnabled && isBeatFxReady();
-
-/** Tuning read only while drawing a frame; changing just these needs no scene rebuild. */
-const FRAME_READ_TUNING_KEYS: ReadonlySet<keyof SonnetTuning> = new Set(['beatIntensity', 'downbeatIntensity']);
-
-/** Whether `next` differs from `previous` only in tuning read per frame (the 轻拍 / 重拍 strengths). */
-export const onlyFrameReadTuningChanged = (previous: SonnetTuning, next: SonnetTuning): boolean =>
-    (Object.keys(next) as Array<keyof SonnetTuning>).every(key =>
-        FRAME_READ_TUNING_KEYS.has(key) || previous[key] === next[key]);
+export const isSonnetBeatFxActive = (smartBeatEnabled: boolean): boolean =>
+    smartBeatEnabled && isBeatFxReady();
 
 /**
  * Creates the per-runtime frame reader. Returns null every frame the FX are not active, so callers
@@ -101,8 +94,8 @@ export const onlyFrameReadTuningChanged = (previous: SonnetTuning, next: SonnetT
 export const createSonnetBeatFxReader = () => {
     let smoothedTreble = 0;
     const frame: SonnetBeatFxFrame = { zoom: 1, rotation: 0, tear: 0, tearSeed: 0, flare: 0, lineLift: 0 };
-    return (audioBands: AudioBands | undefined, tuning: SonnetTuning): SonnetBeatFxFrame | null => {
-        if (!isSonnetBeatFxActive(tuning)) {
+    return (audioBands: AudioBands | undefined, smartBeatEnabled: boolean): SonnetBeatFxFrame | null => {
+        if (!isSonnetBeatFxActive(smartBeatEnabled)) {
             smoothedTreble = 0;
             return null;
         }
@@ -113,8 +106,8 @@ export const createSonnetBeatFxReader = () => {
         const target = Math.min(1, Math.max(0, (treble - 0.04) / 0.35));
         smoothedTreble += (target - smoothedTreble) * (target > smoothedTreble ? 0.25 : 0.08);
         return resolveSonnetBeatFxFrame(
-            beatImpact.get() * tuning.beatIntensity,
-            downbeatImpact.get() * tuning.downbeatIntensity,
+            beatImpact.get(),
+            downbeatImpact.get(),
             getBeatFxRotationSign(),
             performance.now() / 1000,
             smoothedTreble,

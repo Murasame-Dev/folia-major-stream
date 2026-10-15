@@ -40,7 +40,7 @@ const MODEL_FILES = {
  *
  * beat_this_small is the authors' small0 checkpoint (2.1M parameters against final0's 20M), exported
  * like final0 with --f16 into one 4.7MB file. Not in git: packaging/beat-this-small pulls the pinned
- * release into models/ at build time, and extraResources ships it. Sonnet's 智能动感模式 runs it, on
+ * release into models/ at build time, and extraResources ships it. 智能动感模式 runs it, on
  * the GPU only; automix keeps final0, and the CPU fallback never sees this file.
  */
 const BUNDLED_MODEL_NAMES = ['beat_this_small'];

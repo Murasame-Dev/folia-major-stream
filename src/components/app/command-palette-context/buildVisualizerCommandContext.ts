@@ -31,9 +31,9 @@ export const buildVisualizerCommandContext = (
             const videoLayer = useVideoLayerSettingsStore.getState();
             videoLayer.setVideoLayerEnabled(!videoLayer.videoLayerEnabled);
         },
-        toggleSonnetSmartBeat: () => {
+        toggleSmartBeat: () => {
             const latest = useVisualizerSettingsStore.getState();
-            latest.handleSetSonnetTuning({ smartBeatEnabled: !latest.sonnetTuning.smartBeatEnabled });
+            latest.handleSetSmartBeat({ enabled: !latest.smartBeat.enabled });
         },
         pickVideoLayerFile: () => useVideoLayerSettingsStore.getState().pickLocalFile(),
         usesWordSegmentation: Boolean(getVisualizerRegistryEntry(visualizer.visualizerMode).usesWordSegmentation),

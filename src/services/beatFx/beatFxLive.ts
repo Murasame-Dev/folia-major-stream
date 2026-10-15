@@ -7,6 +7,11 @@ import type { BeatFxSourceKind } from './beatFxSource';
 // existing playback RAF loop, and written into the `beatImpact` / `downbeatImpact` MotionValues.
 // No React state anywhere on this path.
 //
+// The MotionValues carry the envelopes already scaled by 智能动感模式's 轻拍 / 重拍 strengths
+// (`setBeatFxIntensities`), so every visualizer reading them gets the user's strengths without
+// reading settings itself. Discrete effects (a ripple per beat) count `getBeatFxFiredCounts` instead
+// and scale by `getBeatFxIntensities`.
+//
 // Diagnostics (`window.__foliaBeatFx`: beats fired, source, latency, the two envelopes) exist in a
 // dev build, or in any build with localStorage['folia.dev.beatFxDebug'] = '1' at startup.
 
@@ -72,6 +77,24 @@ let lastStepAt: number | null = null;
 let holdUntil = 0;
 /** Whether the last step had a deck being heard; false while paused or stopped. */
 let hearing = false;
+const intensities = { beat: 1, downbeat: 1 };
+const firedCounts = { beats: 0, downbeats: 0 };
+
+/** The 轻拍 / 重拍 strengths (0..2) the envelopes are scaled by from the next step on. */
+export const setBeatFxIntensities = (beat: number, downbeat: number) => {
+    intensities.beat = beat;
+    intensities.downbeat = downbeat;
+};
+
+/** The current 轻拍 / 重拍 strengths; one shared object, read it rather than keep it. */
+export const getBeatFxIntensities = (): Readonly<{ beat: number; downbeat: number }> => intensities;
+
+/**
+ * How many beats and downbeats the clock has fired since the app started - only ever growing, across
+ * tracks and seeks - so a frame loop that remembers last frame's counts sees exactly the ones fired
+ * since. One shared object, read it rather than keep it.
+ */
+export const getBeatFxFiredCounts = (): Readonly<{ beats: number; downbeats: number }> => firedCounts;
 
 /** Switches the clock to a new track; events arrive later via `setBeatFxEvents`. */
 export const beginBeatFxTrack = (key: string | null) => {
@@ -150,8 +173,10 @@ export const tickBeatFx = (audioElement: HTMLMediaElement | null, context: BaseA
     hearing = heardTime !== null;
 
     stepBeatFxClock(state, heardTime, dtSec);
-    beatImpact.set(state.beatImpact);
-    downbeatImpact.set(state.downbeatImpact);
+    firedCounts.beats = state.firedBeats;
+    firedCounts.downbeats = state.firedDownbeats;
+    beatImpact.set(state.beatImpact * intensities.beat);
+    downbeatImpact.set(state.downbeatImpact * intensities.downbeat);
 
     if (debug) {
         debug.beats = state.firedBeats;

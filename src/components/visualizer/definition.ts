@@ -204,17 +204,18 @@ export interface VisualizerRegistryEntry {
      */
     foliumTunables?: Readonly<Record<string, FoliumTunable>>;
     /*
-     * Whether this mode, with these settings, draws beat FX - the beat clock (services/beatFx) runs,
-     * and the playing track's beats are analysed, only while the mode on screen says yes. A mode's
-     * own reader turns the shared `beatImpact` / `downbeatImpact` signals into its picture (Sonnet:
-     * sonnet/sonnetBeatFx.ts). Modes without it never start the clock.
+     * True when this mode draws beat FX under 智能动感模式 (SmartBeatSettings): its own reader turns
+     * the shared `beatImpact` / `downbeatImpact` signals (services/beatFx) into its picture - Sonnet:
+     * sonnet/sonnetBeatFx.ts, Diorama: diorama/dioramaBeatRipples.ts. The beat clock runs, and the
+     * playing track's beats are analysed, only while the mode or the background on screen draws
+     * them (beatClockTargets.ts).
      */
-    wantsBeatClock?: (settings: VisualizerBeatClockSettings) => boolean;
-}
-
-/** The settings a mode's `wantsBeatClock` may read; widened as more modes draw beat FX. */
-export interface VisualizerBeatClockSettings {
-    sonnetTuning: SonnetTuning;
+    drawsBeatFx?: boolean;
+    /*
+     * False for a mode that never shows the shell background (Still), so a background's beat FX do
+     * not start the beat clock behind it. Unset means it does show it.
+     */
+    rendersBackground?: boolean;
 }
 
 export interface FoliumTunable {

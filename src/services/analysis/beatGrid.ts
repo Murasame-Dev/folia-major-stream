@@ -8,7 +8,7 @@ import { BEAT_GRID_PREFIXES } from './beatGridKeys';
 // and in flight for as long as one run is going.
 //
 // Two features want them and neither should pay twice. Automix's profile keeps only the collapsed
-// `{offset, period}` grid, while Sonnet's 智能动感模式 needs every beat and downbeat; whichever asks
+// `{offset, period}` grid, while 智能动感模式 needs every beat and downbeat; whichever asks
 // first runs the model and stores the list, and the other reads it - or, if it asks while the run is
 // still going, waits for that run instead of decoding and inferring the same track beside it. It is
 // also what lets a replayed track have beat FX from its first second.
@@ -17,7 +17,7 @@ import { BEAT_GRID_PREFIXES } from './beatGridKeys';
 // streaming, and a beat list that stops at twelve seconds would leave the FX silent for the rest.
 // Such a caller runs `analyseBeatGrid` itself and stores nothing.
 //
-// Kept per model. Automix runs final0; Sonnet's beat FX run small0, which ships with the app, and
+// Kept per model. Automix runs final0; the beat FX (智能动感模式) run small0, which ships with the app, and
 // agrees with final0 on most beats but not every downbeat. A list from one is never read, filed or
 // joined as the other's: automix would otherwise build transitions on small0's downbeats, and the
 // beat FX would land differently on a track depending on whether automix had seen it.

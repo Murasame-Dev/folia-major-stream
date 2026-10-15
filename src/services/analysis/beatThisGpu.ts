@@ -158,7 +158,7 @@ let adapterProbe: Promise<boolean> | null = null;
 /**
  * Whether this renderer can run the WebGPU path, as far as can be told without loading the model:
  * not already failed this session, and an adapter on offer. Asked by settings that depend on it
- * (Sonnet's 智能动感模式) so they can say so instead of sitting on and inert; `navigator.gpu` alone
+ * (智能动感模式) so they can say so instead of sitting on and inert; `navigator.gpu` alone
  * exists on machines whose GPU is blocklisted and hands out no adapter. The adapter is not kept.
  */
 export const probeBeatThisGpu = (): Promise<boolean> => {

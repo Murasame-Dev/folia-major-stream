@@ -1,7 +1,6 @@
 import { type VisualizerMode } from '../../types';
 import { BUILTIN_VISUALIZER_MODES, DEFAULT_VISUALIZER_MODE, assertBuiltinModeList } from '../../types/visualizerModes';
 import {
-    type VisualizerBeatClockSettings,
     type VisualizerEntryModule,
     type VisualizerRegistryEntry,
 } from './definition';
@@ -111,10 +110,3 @@ export const removeVisualizerEntry = (mode: VisualizerMode): boolean => {
     }
     return true;
 };
-
-/**
- * Whether the mode on screen, with these settings, draws beat FX (`wantsBeatClock`); the beat clock
- * and the per-track beat analysis run only while it does.
- */
-export const visualizerWantsBeatClock = (mode: VisualizerMode, settings: VisualizerBeatClockSettings): boolean =>
-    Boolean(getVisualizerRegistryEntry(mode).wantsBeatClock?.(settings));

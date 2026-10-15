@@ -66,6 +66,8 @@ export interface SonnetSceneBuildOptions {
     host: HTMLDivElement;
     theme: Theme;
     tuning: SonnetTuning;
+    /** 智能动感模式 (SmartBeatSettings.enabled): builds the MG onset pop and the downbeat tear's filter. */
+    smartBeatEnabled: boolean;
     lyricsFontScale: number;
     staticMode: boolean;
     transparentBackground: boolean;
@@ -203,7 +205,7 @@ export const buildSonnetScene = (
             height,
             shotSeed,
             iconTextures,
-            options.tuning.smartBeatEnabled,
+            options.smartBeatEnabled,
         );
         shotContainer.addChild(mgLayer);
         const mgBackgroundLayer = (mgLayer as any).bgLayer as import('pixi.js').Container | undefined;
@@ -351,7 +353,7 @@ export const buildSonnetScene = (
         postProcessFilters.push(transitionBlurFilter);
     }
     // 智能动感模式 reuses this filter for the downbeat tear.
-    const transitionGlitchEffect = (options.tuning.enableTransitions || options.tuning.smartBeatEnabled) && !options.staticMode
+    const transitionGlitchEffect = (options.tuning.enableTransitions || options.smartBeatEnabled) && !options.staticMode
         ? createSonnetGlitchEffect(pixi)
         : null;
     if (transitionGlitchEffect) {

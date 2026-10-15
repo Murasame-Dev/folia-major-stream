@@ -75,7 +75,7 @@ export function usePlaybackVisualizerBridge({
     const lyrics = usePlaybackStore(selectDisplayLyrics);
 
     const currentLineIndexRef = useRef(-1);
-    // Sonnet's 智能动感模式: loads the track's beats while it is on; the clock is stepped below. A ref, so
+    // 智能动感模式: loads the track's beats while it is on; the clock is stepped below. A ref, so
     // switching it does not rebuild the frame loop.
     const beatFxWantedRef = useRef(false);
     beatFxWantedRef.current = useBeatFxTrack();

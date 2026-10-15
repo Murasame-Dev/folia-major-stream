@@ -9,7 +9,7 @@ import { isCacheableAudioResponse } from '../playbackRecovery/mediaCacheGuard';
 // rate a model wants.
 //
 // Three analysers read tracks - automix's profile (automix/profileService.ts), stem separation
-// (automix/stems.ts) and Sonnet's 智能动感模式 (beatFx/beatFxSource.ts) - and they had three copies
+// (automix/stems.ts) and 智能动感模式 (beatFx/beatFxSource.ts) - and they had three copies
 // of the same "where are this track's bytes" ladder, already drifting apart: one fell through to the
 // media cache when the playback representation could not be read, the others gave up, and only one
 // could reach a local file with no URL. This is the ladder once. Downloading an online track is not on
