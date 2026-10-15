@@ -32,8 +32,7 @@ async function main() {
     device.addEventListener('uncapturederror', (event) => log(`GPU error: ${(event as GPUUncapturedErrorEvent).error.message}`));
 
     const manifest: BeatThisWgslManifest = JSON.parse(fs.readFileSync(config.weights.replace(/\.bin$/, '.json'), 'utf8'));
-    const raw = fs.readFileSync(config.weights);
-    const weights = new Float32Array(raw.buffer, raw.byteOffset, raw.byteLength / 4);
+    const weights: Uint8Array = fs.readFileSync(config.weights);
     if (config.songs.length) {
         await runSongs(device, weights, manifest, config.songs, config.out);
         ipcRenderer.send('btw-done', 0);
@@ -122,7 +121,7 @@ async function decodeMono(file: string): Promise<Float32Array> {
     return left.map((value, index) => (value + right[index]) / 2);
 }
 
-async function runSongs(device: GPUDevice, weights: Float32Array, manifest: BeatThisWgslManifest, songs: string[], out: string) {
+async function runSongs(device: GPUDevice, weights: Uint8Array, manifest: BeatThisWgslManifest, songs: string[], out: string) {
     const model = await BeatThisWgsl.create(device, weights, manifest);
     const T = BEAT_THIS_WGSL_FRAMES;
     for (const song of songs) {

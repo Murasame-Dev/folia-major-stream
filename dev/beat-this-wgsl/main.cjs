@@ -18,6 +18,7 @@ const path = require('path');
 // The whole acceptance run, from the official checkpoint to identical beat lists:
 //
 //   1. python build/beat_this_wgsl/export_weights.py beat_this-final0.ckpt $W/final0.bin
+//      (or with --f16: matmul weights stored as fp16, 41 MB instead of 81; same steps, same gate)
 //   2. layer by layer, chunk 0 of a [n, 1500, 128] f32 mel file:
 //        python build/beat_this_wgsl/reference.py beat_this-final0.ckpt chunks.npy $REF
 //        BTW_DIR=$OUT BTW_WEIGHTS=$W/final0.bin BTW_CHUNKS=chunks.f32 BTW_STAGES=1 npx electron dev/beat-this-wgsl/main.cjs

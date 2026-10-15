@@ -1,6 +1,6 @@
 /// <reference types="@webgpu/types" />
 import {
-    ATTENTION, CONV_GELU, FLATTEN, MATMUL, MATMUL_GELU, MATMUL_NORM, MATMUL_RESIDUAL, MATMUL_ROPE, STEM_BN, SUM_HEAD,
+    ATTENTION, CONV_GELU, FLATTEN, MATMUL, MATMUL_F16W, MATMUL_GELU, MATMUL_NORM, MATMUL_RESIDUAL, MATMUL_ROPE, STEM_BN, SUM_HEAD,
 } from './kernels';
 
 // src/services/automix/beatThisWgsl/runtime.ts
@@ -15,8 +15,9 @@ const HEAD_DIM = 32;
 
 export interface BeatThisWgslManifest {
     hyper_parameters: { transformer_dim: number; n_layers: number; stem_dim: number; ff_mult: number };
-    tensors: Record<string, { offset: number; shape: number[] }>;
-    floats: number;
+    /** `stride`: padded row length of a matmul weight; dtype 'f16' only for those, from the --f16 export. */
+    tensors: Record<string, { byte_offset: number; shape: number[]; dtype: 'f32' | 'f16'; stride?: number }>;
+    bytes: number;
 }
 
 export interface BeatThisWgslResult {
@@ -39,7 +40,7 @@ const product = (shape: number[]) => shape.reduce((a, b) => a * b, 1);
 
 /** Short kernel names for profiling labels. */
 const KERNEL_NAMES = new Map<string, string>([
-    [STEM_BN, 'stem_bn'], [CONV_GELU, 'conv'], [MATMUL, 'matmul'],
+    [STEM_BN, 'stem_bn'], [CONV_GELU, 'conv'], [MATMUL, 'matmul'], [MATMUL_F16W, 'matmul'],
     [ATTENTION, 'attention'], [FLATTEN, 'flatten'], [SUM_HEAD, 'sum_head'],
 ]);
 
@@ -52,8 +53,8 @@ export class BeatThisWgsl {
         private readonly owned: GPUBuffer[],
     ) {}
 
-    /** Uploads the weights and builds the whole fixed graph for one 1500-frame chunk. */
-    static async create(device: GPUDevice, weights: Float32Array, manifest: BeatThisWgslManifest): Promise<BeatThisWgsl> {
+    /** Uploads the weights (the .bin as written, f32 or --f16) and builds the whole fixed graph for one 1500-frame chunk. */
+    static async create(device: GPUDevice, weights: Uint8Array, manifest: BeatThisWgslManifest): Promise<BeatThisWgsl> {
         const T = BEAT_THIS_WGSL_FRAMES;
         const owned: GPUBuffer[] = [];
         const storage = (floats: number, extra = 0) => {
@@ -65,12 +66,17 @@ export class BeatThisWgsl {
             return buffer;
         };
 
-        const weightBuffer = storage(weights.length);
+        const weightBuffer = storage(Math.ceil(weights.byteLength / 4));
         device.queue.writeBuffer(weightBuffer, 0, weights.buffer, weights.byteOffset, weights.byteLength);
+        const entry = (name: string) => {
+            const found = manifest.tensors[name];
+            if (!found) throw new Error(`beat_this weights: missing tensor ${name}`);
+            return found;
+        };
         const tensor = (name: string): Binding => {
-            const entry = manifest.tensors[name];
-            if (!entry) throw new Error(`beat_this weights: missing tensor ${name}`);
-            return { buffer: weightBuffer, offset: entry.offset * 4, size: product(entry.shape) * 4 };
+            const { byte_offset: offset, shape, dtype, stride } = entry(name);
+            const elements = stride ? shape[0] * stride : product(shape);
+            return { buffer: weightBuffer, offset, size: elements * (dtype === 'f16' ? 2 : 4) };
         };
         const shape = (name: string) => manifest.tensors[name].shape;
 
@@ -92,7 +98,8 @@ export class BeatThisWgsl {
         const zeros = storage(4096);
 
         // RoPE cos/sin per (position, pair), with the f32 angle torch uses (position * freq, rounded).
-        const freqs = weights.subarray(manifest.tensors['rope.freqs'].offset, manifest.tensors['rope.freqs'].offset + HEAD_DIM / 2);
+        const freqsAt = weights.byteOffset + entry('rope.freqs').byte_offset;
+        const freqs = new Float32Array(weights.buffer.slice(freqsAt, freqsAt + (HEAD_DIM / 2) * 4));
         const table = new Float32Array(T * 16 * 2);
         for (let pos = 0; pos < T; pos += 1) {
             for (let i = 0; i < 16; i += 1) {
@@ -138,8 +145,10 @@ export class BeatThisWgsl {
         const matmul = (input: GPUBuffer, weight: string, bias: string | null, output: GPUBuffer, m: number, flags: number,
             rope = { posDiv: 1, posMod: 1, dmodel: 0 }) => {
             const [k, n] = shape(weight);
-            dispatch(MATMUL, [{ buffer: input }, tensor(weight), bias ? tensor(bias) : { buffer: zeros }, { buffer: output }, { buffer: ropeTable }],
-                [m, n, k, flags, rope.posDiv, rope.posMod, rope.dmodel, 0], [Math.ceil(n / 64), Math.ceil(m / 64), 1],
+            const { dtype, stride } = entry(weight);
+            if (!stride) throw new Error(`beat_this weights: ${weight} has no row stride (re-export the weights)`);
+            dispatch(dtype === 'f16' ? MATMUL_F16W : MATMUL, [{ buffer: input }, tensor(weight), bias ? tensor(bias) : { buffer: zeros }, { buffer: output }, { buffer: ropeTable }],
+                [m, n, k, flags, rope.posDiv, rope.posMod, rope.dmodel, stride], [Math.ceil(n / 64), Math.ceil(m / 64), 1],
                 weight.split('.').slice(-2).join('.'));
         };
 
