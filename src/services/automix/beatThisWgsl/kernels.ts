@@ -233,69 +233,87 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 `;
 
 /**
- * Gated multi-head attention, head dim 32, online softmax (no score matrix is ever stored, so the
- * 1500x1500 time-axis attention never meets the storage binding size limit). One invocation per
- * query; a workgroup covers 64 queries of one (batch, head) and streams keys/values through
- * workgroup memory 32 at a time. Query row = batch * batchStride + index * seqStride.
+ * Gated multi-head attention, head dim 32, FlashAttention-style: keys and values stream through
+ * workgroup memory in tiles of 32, and each tile is handled as a block - all 32 scores first, one
+ * max, one rescale of the running sum and accumulator, then the 32 weighted values - so the
+ * 1500x1500 score matrix is never stored and the exp/rescale cost is per tile, not per key.
+ * One invocation per query, 64 queries of one (batch, head) per workgroup, vec4 throughout the
+ * inner loops. Query row = batch * batchStride + index * seqStride.
  */
 export const ATTENTION = /* wgsl */ `
 struct P { n: u32, heads: u32, width: u32, dmodel: u32, seqStride: u32, batchStride: u32 }
 @group(0) @binding(0) var<storage, read> qkv: array<f32>;
 @group(0) @binding(1) var<storage, read_write> o: array<f32>; // [rows, dmodel]
 @group(0) @binding(2) var<uniform> p: P;
-var<workgroup> ks: array<f32, 1024>;
-var<workgroup> vs: array<f32, 1024>;
+const TILE = 32u;
+var<workgroup> ks: array<vec4f, 256>; // [TILE keys][8 x vec4]
+var<workgroup> vs: array<vec4f, 256>;
 @compute @workgroup_size(64)
 fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u) {
   let b = wg.z;
   let h = wg.y;
   let qi = wg.x * 64u + l.x;
   let valid = qi < p.n;
-  let qrow = b * p.batchStride + qi * p.seqStride;
-  var q: array<f32, 32>;
-  var acc: array<f32, 32>;
-  if (valid) {
-    for (var d = 0u; d < 32u; d++) { q[d] = qkv[qrow * p.width + h * 32u + d] * 0.17677669529663687; }
+  let qrow = b * p.batchStride + min(qi, p.n - 1u) * p.seqStride;
+  var q: array<vec4f, 8>;
+  var acc: array<vec4f, 8>;
+  let qBase = qrow * p.width + h * 32u;
+  for (var d = 0u; d < 8u; d++) {
+    q[d] = vec4f(qkv[qBase + 4u * d], qkv[qBase + 4u * d + 1u], qkv[qBase + 4u * d + 2u], qkv[qBase + 4u * d + 3u]) * 0.17677669529663687;
+    acc[d] = vec4f(0.0);
   }
   var m = -3.0e38;
   var sum = 0.0;
-  for (var k0 = 0u; k0 < p.n; k0 += 32u) {
-    for (var i = 0u; i < 16u; i++) {
+  for (var k0 = 0u; k0 < p.n; k0 += TILE) {
+    // 32 keys x 8 vec4 = 256 vec4 each for K and V, four per invocation.
+    for (var i = 0u; i < 4u; i++) {
       let idx = l.x + i * 64u;
-      let kj = k0 + idx / 32u;
-      var kv = 0.0;
-      var vv = 0.0;
+      let kj = k0 + idx / 8u;
+      var kv = vec4f(0.0);
+      var vv = vec4f(0.0);
       if (kj < p.n) {
-        let base = (b * p.batchStride + kj * p.seqStride) * p.width + h * 32u + idx % 32u;
-        kv = qkv[base + p.dmodel];
-        vv = qkv[base + 2u * p.dmodel];
+        let base = (b * p.batchStride + kj * p.seqStride) * p.width + h * 32u + (idx % 8u) * 4u;
+        let kb = base + p.dmodel;
+        let vb = base + 2u * p.dmodel;
+        kv = vec4f(qkv[kb], qkv[kb + 1u], qkv[kb + 2u], qkv[kb + 3u]);
+        vv = vec4f(qkv[vb], qkv[vb + 1u], qkv[vb + 2u], qkv[vb + 3u]);
       }
       ks[idx] = kv;
       vs[idx] = vv;
     }
     workgroupBarrier();
-    if (valid) {
-      let count = min(32u, p.n - k0);
-      for (var j = 0u; j < count; j++) {
-        var s = 0.0;
-        for (var d = 0u; d < 32u; d++) { s += q[d] * ks[j * 32u + d]; }
-        if (s > m) {
-          let r = exp(m - s);
-          sum *= r;
-          for (var d = 0u; d < 32u; d++) { acc[d] *= r; }
-          m = s;
-        }
-        let e = exp(s - m);
-        sum += e;
-        for (var d = 0u; d < 32u; d++) { acc[d] += e * vs[j * 32u + d]; }
-      }
+    let count = min(TILE, p.n - k0);
+    var s: array<f32, 32>;
+    var tileMax = -3.0e38;
+    for (var j = 0u; j < count; j++) {
+      var dotv = vec4f(0.0);
+      for (var d = 0u; d < 8u; d++) { dotv = fma(q[d], ks[j * 8u + d], dotv); }
+      s[j] = dotv.x + dotv.y + dotv.z + dotv.w;
+      tileMax = max(tileMax, s[j]);
+    }
+    let mNew = max(m, tileMax);
+    let r = exp(m - mNew);
+    sum *= r;
+    for (var d = 0u; d < 8u; d++) { acc[d] *= r; }
+    m = mNew;
+    for (var j = 0u; j < count; j++) {
+      let e = exp(s[j] - m);
+      sum += e;
+      for (var d = 0u; d < 8u; d++) { acc[d] = fma(vec4f(e), vs[j * 8u + d], acc[d]); }
     }
     workgroupBarrier();
   }
   if (!valid) { return; }
   let gate = 1.0 / (1.0 + exp(-qkv[qrow * p.width + 3u * p.dmodel + h]));
   let scale = gate / sum;
-  for (var d = 0u; d < 32u; d++) { o[qrow * p.dmodel + h * 32u + d] = acc[d] * scale; }
+  let oBase = qrow * p.dmodel + h * 32u;
+  for (var d = 0u; d < 8u; d++) {
+    let v = acc[d] * scale;
+    o[oBase + 4u * d] = v.x;
+    o[oBase + 4u * d + 1u] = v.y;
+    o[oBase + 4u * d + 2u] = v.z;
+    o[oBase + 4u * d + 3u] = v.w;
+  }
 }
 `;
 
