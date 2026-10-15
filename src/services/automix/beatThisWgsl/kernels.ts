@@ -282,13 +282,14 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u
       vs[idx] = vv;
     }
     workgroupBarrier();
-    let count = min(TILE, p.n - k0);
+    // Constant trip counts so the compiler unrolls and keeps s[] in registers; keys past the end
+    // of the sequence get a score of -3e38, whose exp is exactly 0.
     var s: array<f32, 32>;
     var tileMax = -3.0e38;
-    for (var j = 0u; j < count; j++) {
+    for (var j = 0u; j < TILE; j++) {
       var dotv = vec4f(0.0);
       for (var d = 0u; d < 8u; d++) { dotv = fma(q[d], ks[j * 8u + d], dotv); }
-      s[j] = dotv.x + dotv.y + dotv.z + dotv.w;
+      s[j] = select(-3.0e38, dotv.x + dotv.y + dotv.z + dotv.w, k0 + j < p.n);
       tileMax = max(tileMax, s[j]);
     }
     let mNew = max(m, tileMax);
@@ -296,7 +297,7 @@ fn main(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) l: vec3u
     sum *= r;
     for (var d = 0u; d < 8u; d++) { acc[d] *= r; }
     m = mNew;
-    for (var j = 0u; j < count; j++) {
+    for (var j = 0u; j < TILE; j++) {
       let e = exp(s[j] - m);
       sum += e;
       for (var d = 0u; d < 8u; d++) { acc[d] = fma(vec4f(e), vs[j * 8u + d], acc[d]); }
