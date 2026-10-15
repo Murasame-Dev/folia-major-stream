@@ -1,6 +1,6 @@
 /// <reference types="@webgpu/types" />
 import {
-    ATTENTION, CONV_GELU, FLATTEN, MATMUL, MATMUL_F16W, MATMUL_GELU, MATMUL_NORM, MATMUL_RESIDUAL, MATMUL_ROPE, STEM_BN, SUM_HEAD,
+    ATTENTION, ATTENTION_F16, ATTENTION_F16_MATH, CONV_GELU, FLATTEN, MATMUL, MATMUL_F16, MATMUL_F16_MATH, MATMUL_F16W, MATMUL_GELU, MATMUL_NORM, MATMUL_RESIDUAL, MATMUL_ROPE, STEM_BN, SUM_HEAD,
 } from './kernels';
 
 // src/services/automix/beatThisWgsl/runtime.ts
@@ -40,8 +40,8 @@ const product = (shape: number[]) => shape.reduce((a, b) => a * b, 1);
 
 /** Short kernel names for profiling labels. */
 const KERNEL_NAMES = new Map<string, string>([
-    [STEM_BN, 'stem_bn'], [CONV_GELU, 'conv'], [MATMUL, 'matmul'], [MATMUL_F16W, 'matmul'],
-    [ATTENTION, 'attention'], [FLATTEN, 'flatten'], [SUM_HEAD, 'sum_head'],
+    [STEM_BN, 'stem_bn'], [CONV_GELU, 'conv'], [MATMUL, 'matmul'], [MATMUL_F16W, 'matmul'], [MATMUL_F16, 'matmul'], [MATMUL_F16_MATH, 'matmul'],
+    [ATTENTION, 'attention'], [ATTENTION_F16, 'attention'], [ATTENTION_F16_MATH, 'attention'], [FLATTEN, 'flatten'], [SUM_HEAD, 'sum_head'],
 ]);
 
 export class BeatThisWgsl {
@@ -53,8 +53,15 @@ export class BeatThisWgsl {
         private readonly owned: GPUBuffer[],
     ) {}
 
-    /** Uploads the weights (the .bin as written, f32 or --f16) and builds the whole fixed graph for one 1500-frame chunk. */
-    static async create(device: GPUDevice, weights: Uint8Array, manifest: BeatThisWgslManifest): Promise<BeatThisWgsl> {
+    /**
+     * Uploads the weights (the .bin as written, f32 or --f16) and builds the whole fixed graph for one
+     * 1500-frame chunk. `f16` (device created with 'shader-f16'): 'storage' keeps matmul and attention
+     * tiles in f16 with f32 arithmetic, 'math' multiplies in f16 too (see kernels.ts for what each
+     * costs). Without it the fp16 weights are unpacked and everything is computed in f32.
+     */
+    static async create(device: GPUDevice, weights: Uint8Array, manifest: BeatThisWgslManifest,
+        options: { f16?: 'storage' | 'math' } = {}): Promise<BeatThisWgsl> {
+        if (options.f16 && !device.features.has('shader-f16')) throw new Error('beat_this f16: device lacks shader-f16');
         const T = BEAT_THIS_WGSL_FRAMES;
         const owned: GPUBuffer[] = [];
         const storage = (floats: number, extra = 0) => {
@@ -147,7 +154,8 @@ export class BeatThisWgsl {
             const [k, n] = shape(weight);
             const { dtype, stride } = entry(weight);
             if (!stride) throw new Error(`beat_this weights: ${weight} has no row stride (re-export the weights)`);
-            dispatch(dtype === 'f16' ? MATMUL_F16W : MATMUL, [{ buffer: input }, tensor(weight), bias ? tensor(bias) : { buffer: zeros }, { buffer: output }, { buffer: ropeTable }],
+            const f16Kernel = options.f16 === 'math' ? MATMUL_F16_MATH : MATMUL_F16;
+            dispatch(dtype !== 'f16' ? MATMUL : options.f16 ? f16Kernel : MATMUL_F16W, [{ buffer: input }, tensor(weight), bias ? tensor(bias) : { buffer: zeros }, { buffer: output }, { buffer: ropeTable }],
                 [m, n, k, flags, rope.posDiv, rope.posMod, rope.dmodel, stride], [Math.ceil(n / 64), Math.ceil(m / 64), 1],
                 weight.split('.').slice(-2).join('.'));
         };
@@ -163,7 +171,7 @@ export class BeatThisWgsl {
             scope = prefix;
             matmul(stream, `${prefix}.attn.qkvg.w`, `${prefix}.attn.qkvg.b`, qkv, rows, MATMUL_NORM | MATMUL_ROPE,
                 { posDiv: axis.posDiv, posMod: axis.n, dmodel: c });
-            dispatch(ATTENTION, [{ buffer: qkv }, { buffer: o }], [axis.n, heads, width, c, axis.seqStride, axis.batchStride],
+            dispatch(!options.f16 ? ATTENTION : options.f16 === 'math' ? ATTENTION_F16_MATH : ATTENTION_F16, [{ buffer: qkv }, { buffer: o }], [axis.n, heads, width, c, axis.seqStride, axis.batchStride],
                 [Math.ceil(axis.n / 64), heads, axis.batches]);
             matmul(o, `${prefix}.attn.out.w`, null, stream, rows, MATMUL_RESIDUAL);
             matmul(stream, `${prefix}.ff.w1`, `${prefix}.ff.b1`, u, rows, MATMUL_NORM | MATMUL_GELU);
