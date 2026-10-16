@@ -131,6 +131,8 @@
       }
     ],
     "mac": {
+      "identity": "-",
+      "hardenedRuntime": false,
       "extraResources": [
         {
           "from": "build/koffi/darwin_${arch}",
